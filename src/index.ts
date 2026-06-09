@@ -120,15 +120,23 @@ export class AgentPersonaCoachPlugin {
    * Returns a nudge string if rule compliance should be checked, or null.
    */
   onToolBefore(
-    _sessionId: string,
+    sessionId: string,
     toolName: string,
     toolMetadata: { requiresPermission?: string },
     agentName: string,
     agentInfo: Record<string, unknown>
   ): string | null {
-    if (this.stateManager.shouldInjectRuleCompliance(toolName, toolMetadata)) {
+    // First check if the tool is critical at all (permission/name check only)
+    if (!this.stateManager.isToolCritical(toolName, toolMetadata)) return null;
+
+    // Increment critical count BEFORE cadence check (so 2nd call has count=2, 2%2=0)
+    const state = this.stateManager.incrementCriticalToolCall(sessionId);
+
+    // Check cadence: inject on every N-th critical call
+    if (this.stateManager.shouldInjectRuleCompliance(state, toolName, toolMetadata)) {
       return this.buildNudge("rules", agentName, agentInfo);
     }
+
     return null;
   }
 

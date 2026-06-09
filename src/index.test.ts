@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
 import { AgentPersonaCoachPlugin } from "./index.js";
+import { DEFAULT_CONFIG } from "./types.js";
 import { aMockChatClient } from "./test-utils.js";
 
 const VALID_JSON_RESPONSE = JSON.stringify({
@@ -123,36 +124,105 @@ describe("AgentPersonaCoachPlugin", () => {
     });
   });
 
-  describe("onToolBefore — rule compliance", () => {
+  describe("onToolBefore — rule compliance (cadence-based)", () => {
     beforeEach(async () => {
       await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
     });
 
-    it("should inject rules nudge for critical tool (write permission)", () => {
-      const result = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+    it("should inject rules nudge on 2nd critical call (cadence 2)", () => {
+      // Call 1 (critical write): no nudge (1%2≠0)
+      const r1 = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      strictEqual(r1, null);
 
-      ok(result !== null);
-      ok(result!.includes("Rule Compliance"));
-      ok(result!.includes("Am I following my constraints?"));
+      // Call 2 (critical write): nudge injected (2%2=0)
+      const r2 = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r2 !== null);
+      ok(r2!.includes("Rule Compliance"));
+      ok(r2!.includes("Am I following my constraints?"));
     });
 
-    it("should inject rules nudge for bash permission", () => {
-      const result = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
+    it("should skip nudge on 1st critical call", () => {
+      const result = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      strictEqual(result, null);
+    });
 
-      ok(result !== null);
-      ok(result!.includes("Rule Compliance"));
+    it("should inject rules nudge on 4th critical call", () => {
+      // Calls 1-3: no nudge on 1 (1%2≠0), nudge on 2 (2%2=0), no nudge on 3 (3%2≠0)
+      plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+
+      // Call 4: nudge injected (4%2=0)
+      const r4 = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r4 !== null);
+      ok(r4!.includes("Rule Compliance"));
+    });
+
+    it("should inject rules nudge for bash permission on cadence", () => {
+      // 1st critical call (bash): no nudge
+      const r1 = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
+      strictEqual(r1, null);
+
+      // 2nd critical call (bash): nudge
+      const r2 = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r2 !== null);
+      ok(r2!.includes("Rule Compliance"));
     });
 
     it("should return null for non-critical tool", () => {
       const result = plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
-
       strictEqual(result, null);
     });
 
     it("should return null for tool without critical permission metadata", () => {
       const result = plugin.onToolBefore(SESSION_ID, "someTool", {}, AGENT_NAME, AGENT_INFO_V1);
-
       strictEqual(result, null);
+    });
+
+    it("should not advance critical counter on non-critical tools", () => {
+      // Non-critical read — counter stays at 0
+      plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
+
+      // Next write is call #1 — no nudge (1%2≠0)
+      const r = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      strictEqual(r, null);
+
+      // Next write is call #2 — nudge (2%2=0)
+      const r2 = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r2 !== null);
+    });
+
+    it("should mix critical and non-critical tools correctly", () => {
+      // 1st critical (write): no nudge
+      plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+
+      // Non-critical reads — counter unchanged
+      plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
+      plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
+
+      // 2nd critical (bash): nudge (2%2=0)
+      const r = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r !== null);
+      ok(r!.includes("Rule Compliance"));
+    });
+
+    it("should respect cadence 1 (every call — old behavior)", async () => {
+      const cadence1MockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      const cadence1Plugin = new AgentPersonaCoachPlugin({
+        categories: {
+          ...DEFAULT_CONFIG.categories,
+          rules: { ...DEFAULT_CONFIG.categories.rules, cadence: 1 },
+        },
+      });
+      cadence1Plugin.setChatClient(cadence1MockClient);
+      await cadence1Plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      // Every critical call should inject
+      const r1 = cadence1Plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r1 !== null);
+
+      const r2 = cadence1Plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
+      ok(r2 !== null);
     });
   });
 

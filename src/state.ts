@@ -9,6 +9,7 @@ export class CoachStateManager {
     return (
       this.states.get(sessionId) ?? {
         toolCallCount: 0,
+        criticalToolCallCount: 0,
         referenceCheckInjected: false,
       }
     );
@@ -36,6 +37,24 @@ export class CoachStateManager {
   }
 
   shouldInjectRuleCompliance(
+    state: CoachState,
+    toolName: string,
+    toolMetadata?: { requiresPermission?: string }
+  ): boolean {
+    if (!this.isToolCritical(toolName, toolMetadata)) return false;
+
+    // Cadence check: inject only on every N-th critical call
+    return (
+      state.criticalToolCallCount > 0 &&
+      state.criticalToolCallCount % this.config.categories.rules.cadence === 0
+    );
+  }
+
+  /**
+   * Check if a tool is critical based on permission metadata or name.
+   * Does NOT include cadence check — that's the caller's responsibility.
+   */
+  isToolCritical(
     toolName: string,
     toolMetadata?: { requiresPermission?: string }
   ): boolean {
@@ -50,6 +69,17 @@ export class CoachStateManager {
       return this.config.categories.rules.criticalTools.includes(toolName);
     }
     return false;
+  }
+
+  /**
+   * Increment the critical tool call counter for a session.
+   * Returns the updated state.
+   */
+  incrementCriticalToolCall(sessionId: string): CoachState {
+    const state = this.getState(sessionId);
+    state.criticalToolCallCount++;
+    this.states.set(sessionId, state);
+    return state;
   }
 
   shouldInjectReferenceCheck(state: CoachState): boolean {

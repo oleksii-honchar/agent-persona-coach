@@ -14,6 +14,7 @@ export interface CoachQuestions {
 
 export interface CoachState {
   toolCallCount: number;
+  criticalToolCallCount: number;
   referenceCheckInjected: boolean;
 }
 
@@ -21,7 +22,7 @@ export interface PluginConfig {
   enabled: boolean;
   categories: {
     identity: { enabled: boolean; cadence: number };
-    rules: { enabled: boolean; criticalPermissions: string[]; criticalTools: string[] };
+    rules: { enabled: boolean; cadence: number; criticalPermissions: string[]; criticalTools: string[] };
     references: { enabled: boolean; afterCalls: number };
     progress: { enabled: boolean; cadence: number };
   };
@@ -30,10 +31,10 @@ export interface PluginConfig {
 export const DEFAULT_CONFIG: PluginConfig = {
   enabled: true,
   categories: {
-    identity: { enabled: true, cadence: 4 },
-    rules: { enabled: true, criticalPermissions: ["write", "bash", "task", "create"], criticalTools: [] },
-    references: { enabled: true, afterCalls: 2 },
-    progress: { enabled: true, cadence: 8 },
+    identity: { enabled: true, cadence: 10 },
+    rules: { enabled: true, cadence: 10, criticalPermissions: ["write", "bash", "task", "create"], criticalTools: [] },
+    references: { enabled: true, afterCalls: 30 },
+    progress: { enabled: true, cadence: 20 },
   },
 };
 
