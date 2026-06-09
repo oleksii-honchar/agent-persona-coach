@@ -5,6 +5,7 @@ import { CoachQuestionsCache } from "./cache.js";
 import { CoachGenerator, extractJsonFromMarkdown } from "./generator.js";
 import { CoachStateManager } from "./state.js";
 import { formatNudge, injectNudge } from "./injector.js";
+import { log } from "./logger.js";
 
 /**
  * Agent Persona Coach Plugin
@@ -66,9 +67,7 @@ export class AgentPersonaCoachPlugin {
   ): Promise<void> {
     const personaText = extractPersona(agentInfo);
     if (!personaText) {
-      console.warn(
-        `[persona-coach] No persona text found for agent ${agentName}. Skipping.`
-      );
+      log.warn(`No persona text found for agent ${agentName}. Skipping.`);
       return;
     }
 
@@ -77,9 +76,7 @@ export class AgentPersonaCoachPlugin {
       this.generator.generate(name, text)
     );
 
-    console.log(
-      `[persona-coach] Session initialized for agent ${agentName} with ${Object.values(questions.questions).flat().length} questions`
-    );
+    log.info(`Session initialized for agent ${agentName} with ${Object.values(questions.questions).flat().length} questions`);
   }
 
   /**

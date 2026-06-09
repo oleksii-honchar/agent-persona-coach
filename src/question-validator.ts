@@ -1,3 +1,5 @@
+import { log } from "./logger.js";
+
 /**
  * Question validation and truncation.
  *
@@ -58,9 +60,7 @@ export function validateQuestions(
   }
 
   if (truncatedCount > 0) {
-    console.warn(
-      `[persona-coach] Truncated ${truncatedCount} question(s) exceeding ${MAX_LENGTH} characters.`
-    );
+    log.warn(`Truncated ${truncatedCount} question(s) exceeding ${MAX_LENGTH} characters.`);
   }
 
   return result;

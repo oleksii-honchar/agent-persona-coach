@@ -190,18 +190,22 @@ Hope this helps!`;
 
   describe("question validation (Task 4)", () => {
     let capturedWarnings: string[] = [];
-    let originalWarn: typeof console.warn;
+    let originalStderrWrite: typeof process.stderr.write;
 
     beforeEach(() => {
       capturedWarnings = [];
-      originalWarn = console.warn;
-      console.warn = (msg: string) => {
-        capturedWarnings.push(msg);
+      originalStderrWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk: string | Buffer) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString();
+        for (const line of text.split("\n").filter(Boolean)) {
+          capturedWarnings.push(line);
+        }
+        return originalStderrWrite(chunk);
       };
     });
 
     afterEach(() => {
-      console.warn = originalWarn;
+      process.stderr.write = originalStderrWrite;
     });
 
     it("should truncate questions exceeding 80 characters after generation", async () => {

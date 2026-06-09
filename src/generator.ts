@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CoachQuestions } from "./types.js";
 import { buildCoachPrompt } from "./prompt.js";
 import { validateQuestions } from "./question-validator.js";
+import { log } from "./logger.js";
 
 /**
  * Minimal chat completion client interface.
@@ -71,7 +72,7 @@ export class CoachGenerator {
       };
     } catch (error) {
       // Fallback: return empty questions if generation fails
-      console.warn(`[persona-coach] Failed to generate questions for ${agentName}:`, error);
+      log.warn(`Failed to generate questions for ${agentName}`, { error: error instanceof Error ? error.message : String(error) });
       return this.emptyQuestions(agentName, personaText);
     }
   }

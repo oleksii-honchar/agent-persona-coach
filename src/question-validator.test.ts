@@ -6,16 +6,24 @@ interface LoggerCall {
   message: string;
 }
 
-function captureConsoleWarn(): { calls: LoggerCall[]; restore: () => void } {
+/**
+ * Capture stderr writes (which is where log.warn writes to).
+ * The logger writes structured lines like "WARN  2026-... Truncated N question(s)..."
+ */
+function captureStderr(): { calls: LoggerCall[]; restore: () => void } {
   const calls: LoggerCall[] = [];
-  const original = console.warn;
-  console.warn = (message: string) => {
-    calls.push({ message });
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk: string | Buffer) => {
+    const text = typeof chunk === "string" ? chunk : chunk.toString();
+    for (const line of text.split("\n").filter(Boolean)) {
+      calls.push({ message: line });
+    }
+    return originalWrite(chunk);
   };
   return {
     calls,
     restore: () => {
-      console.warn = original;
+      process.stderr.write = originalWrite;
     },
   };
 }
@@ -28,10 +36,10 @@ const MULTIBYTE_80 = "ｘ".repeat(80); // fullwidth x (U+FF58) — 80 chars
 const MULTIBYTE_81 = MULTIBYTE_80 + "ｘ"; // 81 chars
 
 describe("validateQuestions", () => {
-  let logger: ReturnType<typeof captureConsoleWarn>;
+  let logger: ReturnType<typeof captureStderr>;
 
   beforeEach(() => {
-    logger = captureConsoleWarn();
+    logger = captureStderr();
   });
 
   afterEach(() => {
@@ -172,7 +180,7 @@ describe("validateQuestions", () => {
       });
 
       ok(logger.calls.length >= 1);
-      ok(logger.calls.some((c) => c.message.includes("[persona-coach]")));
+      ok(logger.calls.some((c) => /WARN/.test(c.message)));
       ok(logger.calls.some((c) => /truncated/i.test(c.message)));
     });
 
