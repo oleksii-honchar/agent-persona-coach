@@ -56,16 +56,16 @@ describe("AgentPersonaCoachPlugin", () => {
     it("should inject reference check at call 2 (before identity cadence at 4)", () => {
       // Call 1: no injection yet
       const result1 = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(result1, null);
+      strictEqual(result1.length, 0);
 
       // Call 2: reference check triggers (afterCalls: 2)
       const result2 = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
-      ok(result2 !== null);
-      ok(result2!.includes("Reference Check"));
+      ok(result2.length > 0);
+      ok(result2[0].includes("Reference Check"));
 
       // Call 3: no injection (reference already injected, identity not yet at 4)
       const result3 = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(result3, null);
+      strictEqual(result3.length, 0);
     });
 
     it("should inject identity check at call 4", () => {
@@ -74,41 +74,42 @@ describe("AgentPersonaCoachPlugin", () => {
       }
       const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
 
-      ok(result !== null);
-      ok(result!.includes("Identity Check"));
-      ok(result!.includes("Who am I in my role?"));
+      ok(result.length > 0);
+      ok(result[0].includes("Identity Check"));
+      ok(result[0].includes("Who am I in my role?"));
     });
 
-    it("should inject identity check at call 8", () => {
-      // Calls 1-7: no injection at call 4 triggers identity, but we need to get past it
+    it("should inject both identity and progress at call 8", () => {
+      // Calls 1-7: reference fires at call 2, identity at call 4
       for (let i = 0; i < 7; i++) {
         plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
       }
+      // Call 8: both identity (cadence 4) and progress (cadence 8) fire
       const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
 
-      ok(result !== null);
-      ok(result!.includes("Identity Check"));
+      ok(result.length >= 2, `Expected at least 2 nudges (identity + progress), got ${result.length}`);
+      ok(result.some(n => n.includes("Identity Check")), "Missing Identity Check nudge");
+      ok(result.some(n => n.includes("Progress Check")), "Missing Progress Check nudge");
     });
 
     it("should inject reference check after 2 calls", () => {
       plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
       const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
 
-      ok(result !== null);
-      ok(result!.includes("Reference Check"));
+      ok(result.length > 0);
+      ok(result[0].includes("Reference Check"));
     });
 
-    it("should inject progress check at call 8", () => {
+    it("should inject progress check at call 8 alongside identity", () => {
       for (let i = 0; i < 7; i++) {
         plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
       }
       const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
 
-      // At call 8, both identity and progress are due.
-      // The code checks identity first, so identity will be returned.
-      // Progress check is also at 8, but identity is checked first in the code.
-      ok(result !== null);
-      ok(result!.includes("Identity Check"));
+      // At call 8, both identity and progress are due — both should fire.
+      ok(result.length >= 2);
+      ok(result.some(n => n.includes("Identity Check")));
+      ok(result.some(n => n.includes("Progress Check")));
     });
 
     it("should not inject reference check again after it was injected", () => {
@@ -118,7 +119,7 @@ describe("AgentPersonaCoachPlugin", () => {
 
       // Call 3 — no reference check
       const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(result, null);
+      strictEqual(result.length, 0);
     });
   });
 
@@ -165,6 +166,16 @@ describe("AgentPersonaCoachPlugin", () => {
       ok(result.includes(nudge));
     });
 
+    it("should inject multiple nudges into system prompt", () => {
+      const systemPrompt = "You are a helpful assistant.";
+      const nudges = ["Identity Check reminder", "Progress Check reminder"];
+      const result = plugin.updateSystemPrompt(systemPrompt, nudges);
+
+      ok(result.includes(systemPrompt));
+      ok(result.includes("Identity Check reminder"));
+      ok(result.includes("Progress Check reminder"));
+    });
+
     it("should return original prompt when nudge is null", () => {
       const systemPrompt = "You are a helpful assistant.";
       const result = plugin.updateSystemPrompt(systemPrompt, null);
@@ -206,8 +217,8 @@ describe("AgentPersonaCoachPlugin", () => {
       plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
       const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
 
-      ok(result !== null, "Reference check should trigger again after clear");
-      ok(result!.includes("Reference Check"));
+      ok(result.length > 0, "Reference check should trigger again after clear");
+      ok(result[0].includes("Reference Check"));
     });
   });
 });

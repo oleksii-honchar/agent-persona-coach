@@ -84,7 +84,8 @@ export class AgentPersonaCoachPlugin {
 
   /**
    * Called after each tool execution.
-   * Returns a nudge string if a category should be injected, or null.
+   * Returns all applicable nudge strings (multiple categories may fire at same cadence).
+   * Returns an empty array if no categories should be injected.
    */
   onToolAfter(
     sessionId: string,
@@ -92,22 +93,26 @@ export class AgentPersonaCoachPlugin {
     _toolArgs: unknown,
     agentName: string,
     agentInfo: Record<string, unknown>
-  ): string | null {
+  ): string[] {
     const state = this.stateManager.incrementToolCall(sessionId);
+    const nudges: string[] = [];
 
-    // Check all cadence-based categories
+    // Check all cadence-based categories — accumulate all matches
     if (this.shouldInject(state, agentName, "identity")) {
-      return this.buildNudge("identity", agentName, agentInfo);
+      const nudge = this.buildNudge("identity", agentName, agentInfo);
+      if (nudge) nudges.push(nudge);
     }
     if (this.shouldInject(state, agentName, "references")) {
       this.stateManager.markReferenceCheckInjected(sessionId);
-      return this.buildNudge("references", agentName, agentInfo);
+      const nudge = this.buildNudge("references", agentName, agentInfo);
+      if (nudge) nudges.push(nudge);
     }
     if (this.shouldInject(state, agentName, "progress")) {
-      return this.buildNudge("progress", agentName, agentInfo);
+      const nudge = this.buildNudge("progress", agentName, agentInfo);
+      if (nudge) nudges.push(nudge);
     }
 
-    return null;
+    return nudges;
   }
 
   /**
@@ -128,11 +133,12 @@ export class AgentPersonaCoachPlugin {
   }
 
   /**
-   * Update system prompt with a nudge if needed.
+   * Update system prompt with one or more nudges if needed.
    */
-  updateSystemPrompt(systemPrompt: string, nudge: string | null): string {
+  updateSystemPrompt(systemPrompt: string, nudge: string | string[] | null): string {
     if (!nudge) return systemPrompt;
-    return injectNudge(systemPrompt, nudge);
+    const nudges = Array.isArray(nudge) ? nudge : [nudge];
+    return nudges.reduce((prompt, n) => injectNudge(prompt, n), systemPrompt);
   }
 
   // ---- Private helpers ----

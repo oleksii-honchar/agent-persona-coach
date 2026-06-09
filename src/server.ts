@@ -71,9 +71,11 @@ const server: Plugin = async function server(
 ): Promise<Hooks> {
   const plugin = new AgentPersonaCoachPlugin();
 
-  // Per-session state: agent name and last nudge
+  console.log("[persona-coach] Plugin started");
+
+  // Per-session state: agent name and last nudges
   const sessionAgent = new Map<string, string>();
-  const lastNudge = new Map<string, string | null>();
+  const lastNudges = new Map<string, string[]>();
 
   return {
     /**
@@ -93,6 +95,7 @@ const server: Plugin = async function server(
       // the full agent config from the SDK client (input.client).
       try {
         await plugin.initializeSession(agent, {});
+        console.log(`[persona-coach] Session ${sessionID} initialized for agent ${agent}`);
       } catch (err) {
         console.warn(
           `[persona-coach] Failed to initialize session for agent ${agent}:`,
@@ -125,7 +128,8 @@ const server: Plugin = async function server(
       );
 
       if (nudge) {
-        lastNudge.set(sessionID, nudge);
+        lastNudges.set(sessionID, [nudge]);
+        console.log(`[persona-coach] ⚠ ${tool} → rules nudge injected (session ${sessionID})`);
       }
     },
 
@@ -138,14 +142,18 @@ const server: Plugin = async function server(
       const { tool, sessionID, args } = input;
       const agentName = sessionAgent.get(sessionID) ?? "";
 
-      const nudge = plugin.onToolAfter(sessionID, tool, args, agentName, {});
+      const nudges = plugin.onToolAfter(sessionID, tool, args, agentName, {});
 
-      if (nudge) {
-        lastNudge.set(sessionID, nudge);
+      if (nudges.length > 0) {
+        lastNudges.set(sessionID, nudges);
 
-        // Inject as a synthetic system message — better-opencode
-        // flushes injected messages into the session context.
-        output.inject = [{ role: "system", text: nudge }];
+        const categories = nudges
+          .map(n => n.includes("Identity") ? "identity" : n.includes("Progress") ? "progress" : n.includes("Reference") ? "references" : "?")
+          .join(", ");
+        console.log(`[persona-coach] ✦ call ${/* state tracked internally */ ""} → ${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`);
+
+        // Inject each nudge as a separate synthetic system message
+        output.inject = nudges.map(text => ({ role: "system" as const, text }));
       }
     },
 
@@ -161,14 +169,15 @@ const server: Plugin = async function server(
       const system = output.system;
       if (system.length === 0) return;
 
-      const nudge = lastNudge.get(sessionID);
-      if (!nudge) return;
+      const nudges = lastNudges.get(sessionID);
+      if (!nudges || nudges.length === 0) return;
 
-      // Inject nudge into the last system prompt element
+      // Inject all nudges into the last system prompt element
       system[system.length - 1] = plugin.updateSystemPrompt(
         system[system.length - 1],
-        nudge
+        nudges
       );
+      console.log(`[persona-coach] ↻ system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`);
     },
   };
 };
