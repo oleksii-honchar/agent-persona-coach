@@ -53,26 +53,27 @@ describe("extractPersona", () => {
 });
 
 describe("DEFAULT_CONFIG", () => {
-  it("should have identity enabled with cadence 4", () => {
+  it("should have identity enabled with cadence 10", () => {
     strictEqual(DEFAULT_CONFIG.categories.identity.enabled, true);
-    strictEqual(DEFAULT_CONFIG.categories.identity.cadence, 4);
+    strictEqual(DEFAULT_CONFIG.categories.identity.cadence, 10);
   });
 
-  it("should have rules enabled with criticalPermissions", () => {
+  it("should have rules enabled with cadence 10 and criticalPermissions", () => {
     strictEqual(DEFAULT_CONFIG.categories.rules.enabled, true);
+    strictEqual(DEFAULT_CONFIG.categories.rules.cadence, 10);
     strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("write"), true);
     strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("bash"), true);
     strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("task"), true);
     strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("create"), true);
   });
 
-  it("should have references enabled with afterCalls 2", () => {
+  it("should have references enabled with cadence 30", () => {
     strictEqual(DEFAULT_CONFIG.categories.references.enabled, true);
-    strictEqual(DEFAULT_CONFIG.categories.references.afterCalls, 2);
+    strictEqual(DEFAULT_CONFIG.categories.references.cadence, 30);
   });
 
-  it("should have progress enabled with cadence 8", () => {
+  it("should have progress enabled with cadence 20", () => {
     strictEqual(DEFAULT_CONFIG.categories.progress.enabled, true);
-    strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 8);
+    strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 20);
   });
 });
