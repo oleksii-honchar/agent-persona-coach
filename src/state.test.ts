@@ -18,8 +18,6 @@ describe("CoachStateManager", () => {
     });
 
     it("should return same object reference for same session after state is persisted via increment", () => {
-      // getState returns a new throwaway object if state was never persisted.
-      // State is only persisted when incrementToolCall or markReferenceCheckInjected stores it.
       manager.incrementToolCall("session-1");
       const state1 = manager.getState("session-1");
       const state2 = manager.getState("session-1");
@@ -27,10 +25,8 @@ describe("CoachStateManager", () => {
     });
 
     it("should not persist state for session that has never been modified", () => {
-      // Untouched sessions return fresh objects each time
       const state1 = manager.getState("fresh-session");
       const state2 = manager.getState("fresh-session");
-      // Both should have default values but be different objects
       strictEqual(state1.toolCallCount, 0);
       strictEqual(state2.toolCallCount, 0);
       ok(state1 !== state2, "Fresh sessions get new objects each call");
@@ -72,43 +68,36 @@ describe("CoachStateManager", () => {
     });
   });
 
-  describe("shouldInjectIdentityCheck — cadence at 4", () => {
+  describe("shouldInjectIdentityCheck — cadence at 10 (DEFAULT_CONFIG)", () => {
     it("should return false at call 0 (no tool calls yet)", () => {
       const state = manager.getState("session-1");
       ok(!manager.shouldInjectIdentityCheck(state));
     });
 
-    it("should return true at call 4", () => {
+    it("should return true at call 10", () => {
       const session = "session-1";
-      for (let i = 0; i < 4; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 10; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectIdentityCheck(state));
     });
 
-    it("should return true at call 8", () => {
+    it("should return true at call 20", () => {
       const session = "session-1";
-      for (let i = 0; i < 8; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 20; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectIdentityCheck(state));
     });
 
-    it("should return true at call 12", () => {
+    it("should return true at call 30", () => {
       const session = "session-1";
-      for (let i = 0; i < 12; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 30; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectIdentityCheck(state));
     });
 
-    it("should return false at call 1 (not divisible by 4)", () => {
+    it("should return false at call 1 (not divisible by 10)", () => {
       const session = "session-1";
       manager.incrementToolCall(session);
-      const state = manager.getState(session);
-      ok(!manager.shouldInjectIdentityCheck(state));
-    });
-
-    it("should return false at call 3", () => {
-      const session = "session-1";
-      for (let i = 0; i < 3; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(!manager.shouldInjectIdentityCheck(state));
     });
@@ -119,44 +108,51 @@ describe("CoachStateManager", () => {
       const state = manager.getState(session);
       ok(!manager.shouldInjectIdentityCheck(state));
     });
+
+    it("should return false at call 9", () => {
+      const session = "session-1";
+      for (let i = 0; i < 9; i++) manager.incrementToolCall(session);
+      const state = manager.getState(session);
+      ok(!manager.shouldInjectIdentityCheck(state));
+    });
   });
 
-  describe("shouldInjectProgressCheck — cadence at 8", () => {
+  describe("shouldInjectProgressCheck — cadence at 20 (DEFAULT_CONFIG)", () => {
     it("should return false at call 0", () => {
       const state = manager.getState("session-1");
       ok(!manager.shouldInjectProgressCheck(state));
     });
 
-    it("should return true at call 8", () => {
+    it("should return true at call 20", () => {
       const session = "session-1";
-      for (let i = 0; i < 8; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 20; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectProgressCheck(state));
     });
 
-    it("should return true at call 16", () => {
+    it("should return true at call 40", () => {
       const session = "session-1";
-      for (let i = 0; i < 16; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 40; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectProgressCheck(state));
     });
 
-    it("should return false at call 4 (identity cadence, not progress)", () => {
+    it("should return false at call 10 (identity cadence, not progress)", () => {
       const session = "session-1";
-      for (let i = 0; i < 4; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 10; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(!manager.shouldInjectProgressCheck(state));
     });
 
-    it("should return false at call 7", () => {
+    it("should return false at call 15", () => {
       const session = "session-1";
-      for (let i = 0; i < 7; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 15; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(!manager.shouldInjectProgressCheck(state));
     });
   });
 
-  describe("shouldInjectReferenceCheck — once after 2 calls", () => {
+  describe("shouldInjectReferenceCheck — once after 30 calls (DEFAULT_CONFIG)", () => {
     it("should return false at call 0", () => {
       const state = manager.getState("session-1");
       ok(!manager.shouldInjectReferenceCheck(state));
@@ -169,24 +165,23 @@ describe("CoachStateManager", () => {
       ok(!manager.shouldInjectReferenceCheck(state));
     });
 
-    it("should return true at call 2 (threshold reached)", () => {
+    it("should return true at call 30 (threshold reached)", () => {
       const session = "session-1";
-      manager.incrementToolCall(session);
-      manager.incrementToolCall(session);
+      for (let i = 0; i < 30; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectReferenceCheck(state));
     });
 
-    it("should return true at call 5 (threshold exceeded, not yet marked)", () => {
+    it("should return true at call 35 (threshold exceeded, not yet marked)", () => {
       const session = "session-1";
-      for (let i = 0; i < 5; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 35; i++) manager.incrementToolCall(session);
       const state = manager.getState(session);
       ok(manager.shouldInjectReferenceCheck(state));
     });
 
     it("should return false after reference check is marked as injected", () => {
       const session = "session-1";
-      for (let i = 0; i < 3; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 31; i++) manager.incrementToolCall(session);
       manager.markReferenceCheckInjected(session);
       const state = manager.getState(session);
       ok(!manager.shouldInjectReferenceCheck(state));
@@ -194,31 +189,31 @@ describe("CoachStateManager", () => {
 
     it("should return false after reference check is marked even at high call counts", () => {
       const session = "session-1";
-      for (let i = 0; i < 10; i++) manager.incrementToolCall(session);
+      for (let i = 0; i < 50; i++) manager.incrementToolCall(session);
       manager.markReferenceCheckInjected(session);
       const state = manager.getState(session);
       ok(!manager.shouldInjectReferenceCheck(state));
     });
   });
 
-  describe("shouldInjectRuleCompliance — cadence-based", () => {
-    it("should return false at 1st critical call (cadence 2)", () => {
+  describe("shouldInjectRuleCompliance — cadence-based (DEFAULT_CONFIG cadence 10)", () => {
+    it("should return false at 1st critical call", () => {
       const state = { criticalToolCallCount: 1, toolCallCount: 1, referenceCheckInjected: false };
       ok(!manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
-    it("should return true at 2nd critical call (cadence 2)", () => {
-      const state = { criticalToolCallCount: 2, toolCallCount: 2, referenceCheckInjected: false };
+    it("should return true at 10th critical call (cadence 10)", () => {
+      const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
       ok(manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
-    it("should return false at 3rd critical call (cadence 2)", () => {
-      const state = { criticalToolCallCount: 3, toolCallCount: 3, referenceCheckInjected: false };
+    it("should return false at 5th critical call", () => {
+      const state = { criticalToolCallCount: 5, toolCallCount: 5, referenceCheckInjected: false };
       ok(!manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
-    it("should return true at 4th critical call (cadence 2)", () => {
-      const state = { criticalToolCallCount: 4, toolCallCount: 4, referenceCheckInjected: false };
+    it("should return true at 20th critical call (cadence 10)", () => {
+      const state = { criticalToolCallCount: 20, toolCallCount: 20, referenceCheckInjected: false };
       ok(manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
@@ -241,17 +236,17 @@ describe("CoachStateManager", () => {
     });
 
     it("should return false for non-critical permission even at cadence boundary", () => {
-      const state = { criticalToolCallCount: 2, toolCallCount: 2, referenceCheckInjected: false };
+      const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
       ok(!manager.shouldInjectRuleCompliance(state, "readFile", { requiresPermission: "read" }));
     });
 
     it("should return false for tool with no metadata and empty criticalTools", () => {
-      const state = { criticalToolCallCount: 2, toolCallCount: 2, referenceCheckInjected: false };
+      const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
       ok(!manager.shouldInjectRuleCompliance(state, "someHarmlessTool"));
     });
 
     it("should return false for tool with no metadata (undefined permissions)", () => {
-      const state = { criticalToolCallCount: 2, toolCallCount: 2, referenceCheckInjected: false };
+      const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
       ok(!manager.shouldInjectRuleCompliance(state, "someTool", {}));
     });
   });
@@ -346,7 +341,7 @@ describe("CoachStateManager", () => {
       };
       const disabledManager = new CoachStateManager(disabledConfig);
       const session = "session-1";
-      for (let i = 0; i < 4; i++) disabledManager.incrementToolCall(session);
+      for (let i = 0; i < 10; i++) disabledManager.incrementToolCall(session);
       const state = disabledManager.getState(session);
       ok(!disabledManager.shouldInjectIdentityCheck(state));
     });
@@ -361,7 +356,7 @@ describe("CoachStateManager", () => {
       };
       const disabledManager = new CoachStateManager(disabledConfig);
       const session = "session-1";
-      for (let i = 0; i < 8; i++) disabledManager.incrementToolCall(session);
+      for (let i = 0; i < 20; i++) disabledManager.incrementToolCall(session);
       const state = disabledManager.getState(session);
       ok(!disabledManager.shouldInjectProgressCheck(state));
     });
@@ -376,7 +371,7 @@ describe("CoachStateManager", () => {
       };
       const disabledManager = new CoachStateManager(disabledConfig);
       const session = "session-1";
-      for (let i = 0; i < 3; i++) disabledManager.incrementToolCall(session);
+      for (let i = 0; i < 31; i++) disabledManager.incrementToolCall(session);
       const state = disabledManager.getState(session);
       ok(!disabledManager.shouldInjectReferenceCheck(state));
     });
@@ -390,7 +385,7 @@ describe("CoachStateManager", () => {
         },
       };
       const disabledManager = new CoachStateManager(disabledConfig);
-      const state = { criticalToolCallCount: 2, toolCallCount: 2, referenceCheckInjected: false };
+      const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
       ok(!disabledManager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
@@ -454,7 +449,8 @@ describe("CoachStateManager", () => {
           },
         };
         const customManager = new CoachStateManager(customConfig);
-        const state = { criticalToolCallCount: 2, toolCallCount: 2, referenceCheckInjected: false };
+        // DEFAULT_CONFIG has cadence 10 for rules
+        const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
         ok(customManager.shouldInjectRuleCompliance(state, "dangerousTool"));
         const state1 = { criticalToolCallCount: 1, toolCallCount: 1, referenceCheckInjected: false };
         ok(!customManager.shouldInjectRuleCompliance(state1, "dangerousTool"));

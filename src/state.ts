@@ -86,7 +86,7 @@ export class CoachStateManager {
     return (
       this.config.categories.references.enabled &&
       !state.referenceCheckInjected &&
-      state.toolCallCount >= this.config.categories.references.afterCalls
+      state.toolCallCount >= this.config.categories.references.cadence
     );
   }
 
