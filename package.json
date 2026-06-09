@@ -1,0 +1,35 @@
+{
+  "name": "agent-persona-coach",
+  "version": "0.1.0",
+  "description": "Agent Persona Coach — generate and inject persona-specific reflection questions during agent sessions",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "tsc && node --test 'dist/**/*.test.js'",
+    "test:watch": "tsc && node --test --watch 'dist/**/*.test.js'"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.2",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-beta.66"
+  }
+}
