@@ -23,7 +23,7 @@ export interface PluginConfig {
   categories: {
     identity: { enabled: boolean; cadence: number };
     rules: { enabled: boolean; cadence: number; criticalPermissions: string[]; criticalTools: string[] };
-    references: { enabled: boolean; afterCalls: number };
+    references: { enabled: boolean; cadence: number };
     progress: { enabled: boolean; cadence: number };
   };
 }
@@ -33,7 +33,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
   categories: {
     identity: { enabled: true, cadence: 10 },
     rules: { enabled: true, cadence: 10, criticalPermissions: ["write", "bash", "task", "create"], criticalTools: [] },
-    references: { enabled: true, afterCalls: 30 },
+    references: { enabled: true, cadence: 30 },
     progress: { enabled: true, cadence: 20 },
   },
 };
