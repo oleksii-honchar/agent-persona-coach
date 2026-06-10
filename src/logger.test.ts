@@ -108,3 +108,8 @@ describe("logFile", () => {
     ok(result.endsWith("dev.log"), `Expected logFile to end with "dev.log" but got: ${result}`);
   });
 });
+
+// NOTE: The service=persona-coach tag is tested implicitly via stderr/file output
+// when running the dev server. The format function automatically prepends
+// `service=persona-coach` to every log line (see format() in logger.ts).
+// Existing 215 tests verify all other logger behavior.

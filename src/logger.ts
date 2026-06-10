@@ -93,6 +93,8 @@ function format(
   const timestamp = now.toISOString().split(".")[0];
 
   const tags: string[] = [];
+  // Always include the service tag so every log line is filterable
+  tags.push(`service=${SERVICE}`);
   if (extra) {
     for (const [key, value] of Object.entries(extra)) {
       if (value === undefined || value === null) continue;
