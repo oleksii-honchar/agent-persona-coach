@@ -86,8 +86,8 @@ export async function createServerHooks(
       sessionAgent.set(sessionID, agent);
 
       // NEW: Flag identity nudge for injection before next model response
-      if (plugin.config.categories.identity.enabled &&
-          plugin.config.categories.identity.afterEachUserMessage) {
+      if (plugin.config?.categories?.identity?.enabled &&
+          plugin.config?.categories?.identity?.afterEachUserMessage) {
         pendingUserMessageIdentity.set(sessionID, true);
         log.debug(`Identity nudge queued for session ${sessionID}`);
       }

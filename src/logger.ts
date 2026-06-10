@@ -5,8 +5,11 @@
  * output, not in the TUI. Uses the same format as
  * @opencode-ai/core/util/log so the log file remains parseable.
  *
- * The log file is determined by checking for a dev server (dev.log)
- * or falling back to the current date's log file.
+ * The log directory follows XDG Base Directory conventions:
+ *   1. $OPENCODE_LOG_DIR (override for testing / debugging)
+ *   2. $XDG_DATA_HOME + "/opencode/log"
+ *   3. ~/.local/share/opencode/log (XDG fallback)
+ * The log file is always dev.log.
  */
 
 import { createWriteStream } from "node:fs";
@@ -36,44 +39,32 @@ function shouldLog(level: Level): boolean {
 }
 
 /**
- * Resolve the opencode log directory.
- * Matches the path from @opencode-ai/core/src/global.ts:
+ * Resolve the opencode log directory using XDG Base Directory conventions.
+ *
+ * Resolution order:
+ *   1. $OPENCODE_LOG_DIR — explicit override (primarily for testing)
+ *   2. $XDG_DATA_HOME + "/opencode/log" — XDG standard
+ *   3. $HOME/.local/share/opencode/log — XDG fallback
+ *
+ * This matches the path from @opencode-ai/core/src/global.ts:
  *   log: path.join(xdgData, "opencode", "log")
- * On macOS: ~/Library/Application Support/opencode/log
- * On Linux: ~/.local/share/opencode/log
  */
-function logDir(): string {
-  // Allow override for testing
+export function logDir(): string {
   const envDir = process.env.OPENCODE_LOG_DIR;
   if (envDir) return envDir;
 
-  // macOS
-  const macOS = join(homedir(), "Library", "Application Support", "opencode", "log");
-  // Linux / XDG
-  const linux = join(homedir(), ".local", "share", "opencode", "log");
-
-  // Check which exists
-  return macOS; // macOS default; will create if needed
+  const xdgData = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  return join(xdgData, "opencode", "log");
 }
 
 /**
  * Resolve the current log file path.
- * In dev mode (local install), opencode writes to dev.log.
- * In production, it writes to a date-stamped file.
+ *
+ * Always returns `dev.log` inside the log directory. The dev server
+ * (started via start-dev.sh) tails dev.log for --server-logs output.
  */
-function logFile(): string {
-  const dir = logDir();
-  // Dev mode: dev.log (matches Log.init when dev: true)
-  if (process.env.OPENCODE_DEV === "1") {
-    return join(dir, "dev.log");
-  }
-  // Default: dev.log for local development
-  // Production uses date-stamped files, but we can't know the exact name
-  // without reading the Log.init state. dev.log is the safe bet for local.
-  const devLog = join(dir, "dev.log");
-  // Fall back to today's date-stamped file
-  const today = new Date().toISOString().split(".")[0].replace(/:/g, "");
-  return join(dir, `${today}.log`);
+export function logFile(): string {
+  return join(logDir(), "dev.log");
 }
 
 let stream: ReturnType<typeof createWriteStream> | null = null;
