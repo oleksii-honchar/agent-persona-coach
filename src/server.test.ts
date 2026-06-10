@@ -1,9 +1,14 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
 import { AgentPersonaCoachPlugin } from "./index.js";
-import server from "./server.js";
-
+import serverModule from "./server.js";
 import { createServerHooks } from "./server.js";
+
+/**
+ * The server default export is now a V1 plugin object { id, server }.
+ * Extract the bare server function for direct testing.
+ */
+const server = serverModule.server;
 
 function aMockPluginInput() {
   return {

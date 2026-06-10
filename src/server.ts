@@ -110,13 +110,13 @@ export async function createServerHooks(
 
       // Derive permission from tool name — matches criticalPermissions
       // like ["write", "bash", "task", "create"] in DEFAULT_CONFIG.
-      const nudge = plugin.onToolBefore(
+      const nudge = plugin.onToolBefore?.(
         sessionID,
         tool,
         { requiresPermission: tool },
         agentName,
         {}
-      );
+      ) ?? null;
 
       if (nudge) {
         lastNudges.set(sessionID, [nudge]);
@@ -133,7 +133,7 @@ export async function createServerHooks(
       const { tool, sessionID, args } = input;
       const agentName = sessionAgent.get(sessionID) ?? "";
 
-      const nudges = plugin.onToolAfter(sessionID, tool, args, agentName, {});
+      const nudges = plugin.onToolAfter?.(sessionID, tool, args, agentName, {}) ?? [];
 
       if (nudges.length > 0) {
         lastNudges.set(sessionID, nudges);
@@ -165,7 +165,7 @@ export async function createServerHooks(
         const personaText = extractPersonaFromSystem(output.system);
         if (personaText) {
           try {
-            await plugin.initializeSession(agentName, { system: personaText });
+            await plugin.initializeSession?.(agentName, { system: personaText });
             initializedSessions.add(sessionID);
             log.info(`Session ${sessionID} initialized for agent ${agentName} (persona extracted from system prompt)`);
           } catch (err) {
@@ -179,14 +179,14 @@ export async function createServerHooks(
       // NEW: Inject identity nudge after each user message
       if (pendingUserMessageIdentity.get(sessionID)) {
         pendingUserMessageIdentity.delete(sessionID);
-        const nudge = plugin.buildIdentityNudge(agentName, {});
+        const nudge = plugin.buildIdentityNudge?.(agentName, {});
         if (nudge) {
           const system = output.system;
           if (system.length > 0) {
-            system[system.length - 1] = plugin.updateSystemPrompt(
+            system[system.length - 1] = plugin.updateSystemPrompt?.(
               system[system.length - 1],
               nudge
-            );
+            ) ?? system[system.length - 1];
             log.debug(`identity (user-message) nudge injected (session ${sessionID})`);
           }
         }
@@ -200,10 +200,10 @@ export async function createServerHooks(
       if (!nudges || nudges.length === 0) return;
 
       // Inject all nudges into the last system prompt element
-      system[system.length - 1] = plugin.updateSystemPrompt(
+      system[system.length - 1] = plugin.updateSystemPrompt?.(
         system[system.length - 1],
         nudges
-      );
+      ) ?? system[system.length - 1];
       log.debug(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`);
     },
   };
@@ -236,4 +236,12 @@ const server: Plugin = async function server(
   return createServerHooks(plugin, pluginInput);
 };
 
-export default server;
+/**
+ * V1 plugin format object for better-opencode plugin system.
+ *
+ * Using an object with `id` and `server()` lets readV1Plugin detect this as
+ * a V1 plugin directly, bypassing getLegacyPlugins (which would iterate ALL
+ * function exports from index.ts — class constructors, utility functions —
+ * and call them all as servers, causing crashes).
+ */
+export default { id: "agent-persona-coach", server };
