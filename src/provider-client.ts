@@ -1,4 +1,4 @@
-import type { ChatClient } from "./generator.js";
+import type { ChatClient, ModelOverride } from "./generator.js";
 import { log } from "./logger.js";
 
 interface ProviderConfig {
@@ -42,17 +42,32 @@ export class ProviderChatClient implements ChatClient {
       const providerID = model.slice(0, slashIndex);
       const modelID = model.slice(slashIndex + 1);
 
-      // SDK config uses `provider` (singular) with credentials in `options`
-      // e.g. { provider: { openai: { options: { apiKey: "...", baseURL: "..." } } } }
-      const provider = config.provider?.[providerID];
+      // Use runtime provider list (config.provider is empty at this point)
+      const providerList = await (this.sdkClient as any).provider.list();
+      const allProviders = providerList.data?.all ?? providerList.all ?? [];
+      const provider = allProviders.find(
+        (p: any) => p.id === providerID
+      );
       if (!provider) {
-        log.warn("ProviderChatClient: provider not found in config", { providerID });
+        log.warn("ProviderChatClient: provider not found in runtime list", { providerID });
         this.cachedConfig = null;
         return null;
       }
 
-      const baseURL = provider.options?.baseURL;
-      const apiKey = provider.options?.apiKey;
+      // Resolve baseURL: options.baseURL > model.api.url
+      const modelInfo = provider.models?.[modelID];
+      const baseURL = provider.options?.baseURL ?? modelInfo?.api?.url;
+      // Resolve apiKey: options.apiKey > provider.key > first env var
+      let apiKey = provider.options?.apiKey ?? provider.key;
+      if (!apiKey && provider.env?.length > 0) {
+        for (const envVar of provider.env) {
+          const val = (globalThis as any).process?.env?.[envVar];
+          if (val) {
+            apiKey = val;
+            break;
+          }
+        }
+      }
       if (!baseURL || !apiKey) {
         log.warn("ProviderChatClient: missing baseURL or apiKey for provider", { providerID });
         this.cachedConfig = null;
@@ -74,14 +89,63 @@ export class ProviderChatClient implements ChatClient {
     }
   }
 
+  private async getModelFromOverride(modelOverride: ModelOverride): Promise<ProviderConfig> {
+    // Use the SDK client's provider.list() to get the runtime provider map
+    // (config.provider is empty at this point — providers are resolved lazily)
+    const providerList = await (this.sdkClient as any).provider.list();
+    const allProviders = providerList.data?.all ?? providerList.all ?? [];
+    const provider = allProviders.find(
+      (p: any) => p.id === modelOverride.providerID
+    );
+    if (!provider) {
+      log.error(`Provider "${modelOverride.providerID}" not found — available: ${JSON.stringify(allProviders.map((p: any) => p.id))}`);
+      throw new Error(`Provider "${modelOverride.providerID}" not found in SDK config`);
+    }
+
+    // Resolve baseURL: options.baseURL > model.api.url
+    const modelInfo = provider.models?.[modelOverride.modelID];
+    const baseURL = provider.options?.baseURL ?? modelInfo?.api?.url;
+    if (!baseURL) {
+      throw new Error(`Missing baseURL for provider "${modelOverride.providerID}"`);
+    }
+
+    // Resolve apiKey: options.apiKey > provider.key > first env var
+    let apiKey = provider.options?.apiKey ?? provider.key;
+    if (!apiKey && provider.env?.length > 0) {
+      for (const envVar of provider.env) {
+        const val = (globalThis as any).process?.env?.[envVar];
+        if (val) {
+          apiKey = val;
+          break;
+        }
+      }
+    }
+    if (!apiKey) {
+      throw new Error(`Missing apiKey for provider "${modelOverride.providerID}"`);
+    }
+
+    return {
+      providerID: modelOverride.providerID,
+      modelID: modelOverride.modelID,
+      baseURL,
+      apiKey,
+    };
+  }
+
   async createCompletion(request: {
     model: string;
     messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    modelOverride?: ModelOverride;
   }): Promise<{ text: string }> {
-    const config = await this.loadConfig();
-
-    if (!config) {
-      throw new Error("Provider config is missing or malformed; cannot create completion");
+    let config: ProviderConfig;
+    if (request.modelOverride) {
+      config = await this.getModelFromOverride(request.modelOverride);
+    } else {
+      const loaded = await this.loadConfig();
+      if (!loaded) {
+        throw new Error("Provider config is missing or malformed; cannot create completion");
+      }
+      config = loaded;
     }
 
     const url = `${config.baseURL}/chat/completions`;

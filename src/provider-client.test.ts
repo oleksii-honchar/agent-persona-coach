@@ -5,10 +5,13 @@ import { ProviderChatClient } from "./provider-client.js";
 /**
  * Helpers to create mock SDK clients.
  */
-function aMockSdkClient(config: Record<string, unknown> | null = null) {
+function aMockSdkClient(config: Record<string, unknown> | null = null, providerList: Array<Record<string, unknown>> = []) {
   return {
     config: {
       get: async () => config,
+    },
+    provider: {
+      list: async () => ({ data: { all: providerList } }),
     },
   };
 }
@@ -70,12 +73,15 @@ describe("ProviderChatClient", () => {
 
   describe("loadConfig", () => {
     it("should parse valid config with model=provider/model", async () => {
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const config = await client.loadConfig();
@@ -88,11 +94,14 @@ describe("ProviderChatClient", () => {
     });
 
     it("should log warning when model is missing", async () => {
-      const sdkClient = aMockSdkClient({
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        []
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const config = await client.loadConfig();
@@ -102,12 +111,15 @@ describe("ProviderChatClient", () => {
     });
 
     it("should log warning when model ref has no slash", async () => {
-      const sdkClient = aMockSdkClient({
-        model: "gpt4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "gpt4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        []
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const config = await client.loadConfig();
@@ -116,13 +128,16 @@ describe("ProviderChatClient", () => {
       ok(capturedWarnings.some((w) => /malformed.*model/i.test(w)));
     });
 
-    it("should log warning when provider is missing", async () => {
-      const sdkClient = aMockSdkClient({
-        model: "anthropic/claude-3",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+    it("should log warning when provider is missing from runtime list", async () => {
+      const sdkClient = aMockSdkClient(
+        {
+          model: "anthropic/claude-3",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const config = await client.loadConfig();
@@ -132,12 +147,15 @@ describe("ProviderChatClient", () => {
     });
 
     it("should log warning when baseURL is missing", async () => {
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: undefined, apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: undefined, apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const config = await client.loadConfig();
@@ -147,12 +165,15 @@ describe("ProviderChatClient", () => {
     });
 
     it("should log warning when apiKey is missing", async () => {
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: undefined } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: undefined } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const config = await client.loadConfig();
@@ -175,6 +196,9 @@ describe("ProviderChatClient", () => {
             };
           },
         },
+        provider: {
+          list: async () => ({ data: { all: [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }] } }),
+        },
       };
       const client = new ProviderChatClient(sdkClient as any);
 
@@ -185,7 +209,7 @@ describe("ProviderChatClient", () => {
     });
 
     it("should throw descriptive error when config.get() returns null", async () => {
-      const sdkClient = aMockSdkClient(null);
+      const sdkClient = aMockSdkClient(null, []);
       const client = new ProviderChatClient(sdkClient as any);
 
       await rejects(client.loadConfig(), /config.*missing|failed to load/i);
@@ -203,12 +227,15 @@ describe("ProviderChatClient", () => {
         return aMockFetchResponse("Hello!") as Response;
       };
 
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       await client.createCompletion({
@@ -230,12 +257,15 @@ describe("ProviderChatClient", () => {
     it("should return { text: content } on successful response", async () => {
       globalThis.fetch = async () => aMockFetchResponse("Hello from LLM!") as Response;
 
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const result = await client.createCompletion({
@@ -250,12 +280,15 @@ describe("ProviderChatClient", () => {
       globalThis.fetch = async () =>
         aMockFetchResponseWithChoices([]) as Response;
 
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       const result = await client.createCompletion({
@@ -270,12 +303,15 @@ describe("ProviderChatClient", () => {
       globalThis.fetch = async () =>
         aMockFetchResponse("", 400) as Response;
 
-      const sdkClient = aMockSdkClient({
-        model: "openai/gpt-4",
-        provider: {
-          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
         },
-      });
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       await rejects(
@@ -288,7 +324,7 @@ describe("ProviderChatClient", () => {
     });
 
     it("should throw descriptive error when config is null", async () => {
-      const sdkClient = aMockSdkClient(null);
+      const sdkClient = aMockSdkClient(null, []);
       const client = new ProviderChatClient(sdkClient as any);
 
       await rejects(
@@ -301,9 +337,12 @@ describe("ProviderChatClient", () => {
     });
 
     it("should throw descriptive error when model is missing", async () => {
-      const sdkClient = aMockSdkClient({
-        provider: {},
-      });
+      const sdkClient = aMockSdkClient(
+        {
+          provider: {},
+        },
+        []
+      );
       const client = new ProviderChatClient(sdkClient as any);
 
       await rejects(
@@ -331,6 +370,9 @@ describe("ProviderChatClient", () => {
             };
           },
         },
+        provider: {
+          list: async () => ({ data: { all: [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }] } }),
+        },
       };
 
       globalThis.fetch = async () => aMockFetchResponse("Hi") as Response;
@@ -347,6 +389,167 @@ describe("ProviderChatClient", () => {
       });
 
       strictEqual(callCount, 1);
+    });
+  });
+
+  describe("getModelFromOverride", () => {
+    it("should resolve config from modelOverride when provider exists", async () => {
+      let fetchUrl: string | undefined;
+      let fetchBody: unknown;
+
+      globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
+        fetchUrl = String(url);
+        fetchBody = init?.body;
+        return aMockFetchResponse("Hello!") as Response;
+      };
+
+      const sdkClient = aMockSdkClient(
+        {
+          model: "other/other-model",
+          provider: {
+            puma: { options: { baseURL: "https://puma.example.com/v1", apiKey: "sk-puma" } },
+          },
+        },
+        [{ id: "puma", options: { baseURL: "https://puma.example.com/v1", apiKey: "sk-puma" }, key: undefined, env: [] }]
+      );
+      const client = new ProviderChatClient(sdkClient as any);
+
+      await client.createCompletion({
+        model: "default",
+        messages: [{ role: "user", content: "Hi" }],
+        modelOverride: { providerID: "puma", modelID: "qwopus3.6" },
+      });
+
+      strictEqual(fetchUrl, "https://puma.example.com/v1/chat/completions");
+      const body = JSON.parse(fetchBody as string);
+      strictEqual(body.model, "qwopus3.6");
+    });
+
+    it("should throw when provider not found in runtime provider list", async () => {
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
+        },
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
+      const client = new ProviderChatClient(sdkClient as any);
+
+      await rejects(
+        client.createCompletion({
+          model: "default",
+          messages: [{ role: "user", content: "Hi" }],
+          modelOverride: { providerID: "nonexistent", modelID: "some-model" },
+        }),
+        /Provider "nonexistent" not found/
+      );
+    });
+
+    it("should throw when baseURL is missing for provider", async () => {
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            puma: { options: { apiKey: "sk-puma" } },
+          },
+        },
+        [{ id: "puma", options: { apiKey: "sk-puma" }, key: undefined, env: [] }]
+      );
+      const client = new ProviderChatClient(sdkClient as any);
+
+      await rejects(
+        client.createCompletion({
+          model: "default",
+          messages: [{ role: "user", content: "Hi" }],
+          modelOverride: { providerID: "puma", modelID: "qwopus3.6" },
+        }),
+        /Missing baseURL for provider/
+      );
+    });
+
+    it("should throw when apiKey is missing for provider", async () => {
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            puma: { options: { baseURL: "https://puma.example.com/v1" } },
+          },
+        },
+        [{ id: "puma", options: { baseURL: "https://puma.example.com/v1" }, key: undefined, env: [] }]
+      );
+      const client = new ProviderChatClient(sdkClient as any);
+
+      await rejects(
+        client.createCompletion({
+          model: "default",
+          messages: [{ role: "user", content: "Hi" }],
+          modelOverride: { providerID: "puma", modelID: "qwopus3.6" },
+        }),
+        /Missing apiKey for provider/
+      );
+    });
+
+    it("should use override model ID in fetch body, not loadConfig model", async () => {
+      let fetchBody: unknown;
+
+      globalThis.fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+        fetchBody = init?.body;
+        return aMockFetchResponse("Hello!") as Response;
+      };
+
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+            puma: { options: { baseURL: "https://puma.example.com/v1", apiKey: "sk-puma" } },
+          },
+        },
+        [
+          { id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] },
+          { id: "puma", options: { baseURL: "https://puma.example.com/v1", apiKey: "sk-puma" }, key: undefined, env: [] },
+        ]
+      );
+      const client = new ProviderChatClient(sdkClient as any);
+
+      await client.createCompletion({
+        model: "default",
+        messages: [{ role: "user", content: "Hi" }],
+        modelOverride: { providerID: "puma", modelID: "qwopus3.6" },
+      });
+
+      const body = JSON.parse(fetchBody as string);
+      strictEqual(body.model, "qwopus3.6", "should use override modelID, not loadConfig modelID");
+    });
+
+    it("should fall back to loadConfig when modelOverride is not provided", async () => {
+      let fetchBody: unknown;
+
+      globalThis.fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+        fetchBody = init?.body;
+        return aMockFetchResponse("Hello!") as Response;
+      };
+
+      const sdkClient = aMockSdkClient(
+        {
+          model: "openai/gpt-4",
+          provider: {
+            openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
+          },
+        },
+        [{ id: "openai", options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" }, key: undefined, env: [] }]
+      );
+      const client = new ProviderChatClient(sdkClient as any);
+
+      await client.createCompletion({
+        model: "default",
+        messages: [{ role: "user", content: "Hi" }],
+      });
+
+      const body = JSON.parse(fetchBody as string);
+      strictEqual(body.model, "gpt-4", "should fall back to loadConfig modelID");
     });
   });
 });

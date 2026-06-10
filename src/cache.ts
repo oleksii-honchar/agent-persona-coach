@@ -39,12 +39,17 @@ export class CoachQuestionsCache {
   async getOrGenerate(
     agentName: string,
     personaText: string,
-    generate: (agentName: string, personaText: string) => Promise<CoachQuestions>
+    modelOverride: { providerID: string; modelID: string } | undefined,
+    generate: (
+      agentName: string,
+      personaText: string,
+      modelOverride: { providerID: string; modelID: string } | undefined
+    ) => Promise<CoachQuestions>
   ): Promise<CoachQuestions> {
     const cached = this.get(agentName, personaText);
     if (cached) return cached;
 
-    const questions = await generate(agentName, personaText);
+    const questions = await generate(agentName, personaText, modelOverride);
     this.set(questions);
     return questions;
   }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, it, beforeEach } from "node:test";
-import { strictEqual, ok } from "node:assert/strict";
+import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
 import { CoachQuestionsCache } from "./cache.js";
 import type { CoachQuestions } from "./types.js";
 
@@ -159,7 +159,7 @@ describe("CoachQuestionsCache", () => {
       cache.set(questions);
 
       let generateCalled = false;
-      const result = await cache.getOrGenerate("tester", personaText, async () => {
+      const result = await cache.getOrGenerate("tester", personaText, undefined, async () => {
         generateCalled = true;
         return aCoachQuestions();
       });
@@ -174,7 +174,7 @@ describe("CoachQuestionsCache", () => {
       const generated = aCoachQuestions({ agentName: "builder", personaHash });
 
       let generateCalled = false;
-      const result = await cache.getOrGenerate("builder", personaText, async () => {
+      const result = await cache.getOrGenerate("builder", personaText, undefined, async () => {
         generateCalled = true;
         return generated;
       });
@@ -184,13 +184,75 @@ describe("CoachQuestionsCache", () => {
 
       // Subsequent getOrGenerate should return cached value without calling generate again
       let generateCalledAgain = false;
-      const cached = await cache.getOrGenerate("builder", personaText, async () => {
+      const cached = await cache.getOrGenerate("builder", personaText, undefined, async () => {
         generateCalledAgain = true;
         return aCoachQuestions();
       });
 
       strictEqual(generateCalledAgain, false, "Generate should not be called on second getOrGenerate");
       strictEqual(cached, generated, "Second getOrGenerate should return cached value");
+    });
+
+    it("should pass modelOverride to generate callback on cache miss", async () => {
+      const personaText = "You are a coach.";
+      const personaHash = createHash("sha256").update(personaText).digest("hex").slice(0, 16);
+      const generated = aCoachQuestions({ agentName: "coach", personaHash });
+
+      let receivedModelOverride: unknown = null;
+      const result = await cache.getOrGenerate(
+        "coach",
+        personaText,
+        { providerID: "puma", modelID: "qwopus3.6" },
+        async (_agentName, _personaText, modelOverride) => {
+          receivedModelOverride = modelOverride;
+          return generated;
+        }
+      );
+
+      strictEqual(result, generated);
+      ok(receivedModelOverride !== null, "modelOverride should be passed to generate callback");
+      deepStrictEqual(receivedModelOverride, { providerID: "puma", modelID: "qwopus3.6" });
+    });
+
+    it("should pass undefined modelOverride to generate callback when not provided", async () => {
+      const personaText = "You are a coach.";
+      const personaHash = createHash("sha256").update(personaText).digest("hex").slice(0, 16);
+      const generated = aCoachQuestions({ agentName: "coach", personaHash });
+
+      let receivedModelOverride: unknown = "not-set";
+      const result = await cache.getOrGenerate(
+        "coach",
+        personaText,
+        undefined,
+        async (_agentName, _personaText, modelOverride) => {
+          receivedModelOverride = modelOverride;
+          return generated;
+        }
+      );
+
+      strictEqual(result, generated);
+      strictEqual(receivedModelOverride, undefined, "modelOverride should be undefined when not provided");
+    });
+
+    it("should not pass modelOverride to generate on cache hit", async () => {
+      const personaText = "You are a coach.";
+      const personaHash = createHash("sha256").update(personaText).digest("hex").slice(0, 16);
+      const cached = aCoachQuestions({ agentName: "coach", personaHash });
+      cache.set(cached);
+
+      let generateCalled = false;
+      const result = await cache.getOrGenerate(
+        "coach",
+        personaText,
+        { providerID: "puma", modelID: "qwopus3.6" },
+        async () => {
+          generateCalled = true;
+          return aCoachQuestions();
+        }
+      );
+
+      strictEqual(generateCalled, false, "Generate should not be called on cache hit");
+      strictEqual(result, cached);
     });
   });
 });

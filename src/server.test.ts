@@ -339,6 +339,65 @@ describe("server", () => {
       strictEqual(initCalls[1].agent, "agent-b");
       strictEqual(initCalls[1].info.system, "Persona B");
     });
+
+    it("should pass input.model to initializeSession when model is provided", async () => {
+      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
+        agent: string,
+        info: Record<string, unknown>
+      ) {
+        initCalls.push({ agent, info });
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      const output = { system: ["You are a helpful assistant."] };
+      await hooks["experimental.chat.system.transform"]!(
+        {
+          sessionID: "sess-1",
+          model: { providerID: "puma", id: "qwopus3.6" },
+        } as any,
+        output
+      );
+
+      strictEqual(initCalls.length, 1);
+      ok(initCalls[0].info.model !== undefined, "model should be passed to initializeSession");
+      strictEqual((initCalls[0].info.model as any).providerID, "puma");
+      strictEqual((initCalls[0].info.model as any).modelID, "qwopus3.6");
+    });
+
+    it("should handle undefined input.model without crashing", async () => {
+      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
+        agent: string,
+        info: Record<string, unknown>
+      ) {
+        initCalls.push({ agent, info });
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      const output = { system: ["You are a helpful assistant."] };
+      await hooks["experimental.chat.system.transform"]!(
+        { sessionID: "sess-1" } as any,
+        output
+      );
+
+      strictEqual(initCalls.length, 1);
+      strictEqual(initCalls[0].info.model, undefined, "model should be undefined when input.model is missing");
+    });
   });
 
   describe("createServerHooks — pendingUserMessageIdentity", () => {

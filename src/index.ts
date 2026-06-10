@@ -47,6 +47,7 @@ export class AgentPersonaCoachPlugin {
   async createCompletion(request: {
     model: string;
     messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    modelOverride?: { providerID: string; modelID: string };
   }): Promise<{ text: string }> {
     if (!this.chatClient) {
       throw new Error(
@@ -63,7 +64,7 @@ export class AgentPersonaCoachPlugin {
    */
   async initializeSession(
     agentName: string,
-    agentInfo: Record<string, unknown>
+    agentInfo: { prompt?: string; system?: string; model?: { providerID: string; modelID: string } }
   ): Promise<void> {
     const personaText = extractPersona(agentInfo);
     if (!personaText) {
@@ -72,8 +73,12 @@ export class AgentPersonaCoachPlugin {
     }
 
     // Generate or retrieve cached questions
-    const questions = await this.cache.getOrGenerate(agentName, personaText, (name: string, text: string) =>
-      this.generator.generate(name, text)
+    const questions = await this.cache.getOrGenerate(
+      agentName,
+      personaText,
+      agentInfo.model,
+      (name: string, text: string, modelOverride) =>
+        this.generator.generate(name, text, modelOverride)
     );
 
     log.info(`Session initialized for agent ${agentName} with ${Object.values(questions.questions).flat().length} questions`);

@@ -35,7 +35,7 @@ describe("AgentPersonaCoachPlugin", () => {
     });
 
     it("should skip initialization when no persona text found", async () => {
-      await plugin.initializeSession(AGENT_NAME, { name: "no-persona" });
+      await plugin.initializeSession(AGENT_NAME, {});
 
       strictEqual(mockClient.calls.length, 0);
     });
@@ -313,6 +313,68 @@ describe("AgentPersonaCoachPlugin", () => {
     it("should expose config as public readonly", () => {
       ok(plugin.config, "plugin.config should be accessible");
       deepStrictEqual(plugin.config.categories, DEFAULT_CONFIG.categories);
+    });
+  });
+
+  describe("modelOverride support", () => {
+    it("should pass modelOverride through initializeSession when model is provided", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin();
+      plugin.setChatClient(mockClient);
+
+      await plugin.initializeSession(AGENT_NAME, {
+        system: "You are a code reviewer.",
+        model: { providerID: "puma", modelID: "qwopus3.6" },
+      });
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].modelOverride !== undefined, "modelOverride should be passed");
+      strictEqual(mockClient.calls[0].modelOverride!.providerID, "puma");
+      strictEqual(mockClient.calls[0].modelOverride!.modelID, "qwopus3.6");
+    });
+
+    it("should pass undefined modelOverride when model is not provided", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin();
+      plugin.setChatClient(mockClient);
+
+      await plugin.initializeSession(AGENT_NAME, {
+        system: "You are a code reviewer.",
+      });
+
+      strictEqual(mockClient.calls.length, 1);
+      strictEqual(mockClient.calls[0].modelOverride, undefined, "modelOverride should be undefined when model not provided");
+    });
+
+    it("should forward modelOverride in createCompletion to underlying chatClient", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin();
+      plugin.setChatClient(mockClient);
+
+      await plugin.createCompletion({
+        model: "default",
+        messages: [{ role: "user", content: "test" }],
+        modelOverride: { providerID: "puma", modelID: "qwopus3.6" },
+      });
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].modelOverride !== undefined, "modelOverride should be forwarded");
+      strictEqual(mockClient.calls[0].modelOverride!.providerID, "puma");
+      strictEqual(mockClient.calls[0].modelOverride!.modelID, "qwopus3.6");
+    });
+
+    it("should forward undefined modelOverride in createCompletion when not provided", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin();
+      plugin.setChatClient(mockClient);
+
+      await plugin.createCompletion({
+        model: "default",
+        messages: [{ role: "user", content: "test" }],
+      });
+
+      strictEqual(mockClient.calls.length, 1);
+      strictEqual(mockClient.calls[0].modelOverride, undefined, "modelOverride should be undefined when not provided");
     });
   });
 });

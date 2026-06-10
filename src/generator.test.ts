@@ -188,6 +188,59 @@ Hope this helps!`;
     });
   });
 
+ describe("modelOverride support", () => {
+    it("should capture modelOverride in mock calls when provided", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      generator = new CoachGenerator(mockClient);
+
+      const result = await generator.generate("test-agent", "You are a helper.", {
+        providerID: "puma",
+        modelID: "qwopus3.6",
+      });
+
+      ok(result.questions.identity.length > 0);
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].modelOverride !== undefined);
+      strictEqual(mockClient.calls[0].modelOverride!.providerID, "puma");
+      strictEqual(mockClient.calls[0].modelOverride!.modelID, "qwopus3.6");
+    });
+
+    it("should capture undefined modelOverride when not provided", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      generator = new CoachGenerator(mockClient);
+
+      await generator.generate("test-agent", "You are a helper.");
+
+      strictEqual(mockClient.calls.length, 1);
+      strictEqual(mockClient.calls[0].modelOverride, undefined);
+    });
+
+    it("should pass modelOverride through to createCompletion", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      generator = new CoachGenerator(mockClient);
+
+      await generator.generate("test-agent", "You are a helper.", {
+        providerID: "puma",
+        modelID: "qwopus3.6",
+      });
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].modelOverride !== undefined, "modelOverride should be passed to createCompletion");
+      strictEqual(mockClient.calls[0].modelOverride!.providerID, "puma");
+      strictEqual(mockClient.calls[0].modelOverride!.modelID, "qwopus3.6");
+    });
+
+    it("should not include modelOverride in createCompletion when not provided", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      generator = new CoachGenerator(mockClient);
+
+      await generator.generate("test-agent", "You are a helper.");
+
+      strictEqual(mockClient.calls.length, 1);
+      strictEqual(mockClient.calls[0].modelOverride, undefined, "modelOverride should be undefined when not provided");
+    });
+  });
+
   describe("question validation (Task 4)", () => {
     let capturedWarnings: string[] = [];
     let originalStderrWrite: typeof process.stderr.write;

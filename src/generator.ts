@@ -8,10 +8,16 @@ import { log } from "./logger.js";
  * Minimal chat completion client interface.
  * In production, this would be the actual model client.
  */
+export interface ModelOverride {
+  providerID: string;
+  modelID: string;
+}
+
 export interface ChatClient {
   createCompletion(request: {
     model: string;
     messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    modelOverride?: ModelOverride;
   }): Promise<{ text: string }>;
 }
 
@@ -37,7 +43,8 @@ export class CoachGenerator {
 
   async generate(
     agentName: string,
-    personaText: string
+    personaText: string,
+    modelOverride?: ModelOverride
   ): Promise<CoachQuestions> {
     if (!personaText.trim()) {
       return this.emptyQuestions(agentName, personaText);
@@ -50,6 +57,7 @@ export class CoachGenerator {
       const response = await this.client.createCompletion({
         model: "default",
         messages: [{ role: "user", content: prompt }],
+        modelOverride,
       });
 
       const extractedText = extractJsonFromMarkdown(response.text);

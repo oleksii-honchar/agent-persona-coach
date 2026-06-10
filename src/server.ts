@@ -44,7 +44,7 @@ export interface Hooks {
   ) => Promise<void>;
 
   "experimental.chat.system.transform"?: (
-    input: { sessionID?: string; model: unknown },
+    input: { sessionID?: string; model?: { providerID: string; id: string; [key: string]: unknown } },
     output: { system: string[] }
   ) => Promise<void>;
 }
@@ -165,7 +165,11 @@ export async function createServerHooks(
         const personaText = extractPersonaFromSystem(output.system);
         if (personaText) {
           try {
-            await plugin.initializeSession?.(agentName, { system: personaText });
+            const model = input.model
+              ? { providerID: input.model.providerID, modelID: input.model.id }
+              : undefined;
+            log.debug("initializeSession: model from hook", { model, inputModelKeys: input.model ? Object.keys(input.model) : null });
+            await plugin.initializeSession?.(agentName, { system: personaText, model });
             initializedSessions.add(sessionID);
             log.info(`Session ${sessionID} initialized for agent ${agentName} (persona extracted from system prompt)`);
           } catch (err) {
