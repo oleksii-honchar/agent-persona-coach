@@ -34,10 +34,10 @@ Specific design decisions:
 2. **Content-hash-based caching** — Questions are cached per agent keyed by `agentName + SHA-256(personaText)`. If persona text changes, the hash changes → cache miss → questions are regenerated. No manual invalidation needed.
 
 3. **4 predefined categories with fixed cadences:**
-   - Identity Check: every 4 tool calls (verify agent is still in role)
+   - Identity Check: every 10 tool calls (verify agent is still in role)
    - Rule Compliance: before critical tools (write, bash, task, create)
-   - Reference Check: once, after 2 calls (have I read reference files?)
-   - Progress Check: every 8 calls (am I making progress?)
+   - Reference Check: once, after 30 calls (have I read reference files?)
+   - Progress Check: every 20 calls (am I making progress?)
 
 4. **`<system-reminder>` block formatting** — Nudges are formatted as XML `<system-reminder>` blocks. This format is recognized by the LLM as a system-level instruction and doesn't interfere with conversation context.
 

@@ -17,22 +17,19 @@ deprecated:
 
 ## Fact
 
-Under the default cadence configuration, the progress check (every 8 tool calls) never fires because the identity check (every 4 tool calls) is evaluated first at the same hook (`tool.execute.after`) and `onToolAfter` returns immediately after the first matching nudge.
+Under the default cadence configuration, the progress check (every 20 tool calls) could be blocked because the identity check (every 10 tool calls) is evaluated first at the same hook (`tool.execute.after`). In the original implementation, `onToolAfter` returned immediately after the first matching nudge, so only identity would fire at call 20.
 
 ## Context
 
-Both the identity check and progress check fire at `tool.execute.after`. The `onToolAfter` method checks categories in order: identity → references → progress. When `toolCallCount` is a multiple of 8 (8, 16, 24, …), both the identity check and progress check would fire, but the identity check is checked first and the method returns immediately.
+Both the identity check and progress check fire at `tool.execute.after`. The `onToolAfter` method checks categories in order: identity → references → progress. When `toolCallCount` is a multiple of 20 (20, 40, 60, …), both the identity check and progress check would fire, but in the original code the identity check was checked first and the method returned immediately.
 
 **Cadence overlap timeline (default config):**
 ```
-Call 1-2: (no nudges)
-Call 2:   Reference Check (afterCalls=2)
-Call 4:   Identity Check (cadence=4)
-Call 8:   Identity Check (cadence=4) — Progress Check BLOCKED
-Call 12:  Identity Check (cadence=4)
-Call 16:  Identity Check (cadence=4) — Progress Check BLOCKED
-Call 20:  Identity Check (cadence=4)
-Call 24:  Identity Check (cadence=4) — Progress Check BLOCKED
+Call 1-29:  (no nudges, or occasional identity at 10)
+Call 10:    Identity Check (cadence=10)
+Call 20:    Identity Check (cadence=10) — Progress Check BLOCKED (original bug)
+Call 30:    Identity Check (cadence=10) + Reference Check (cadence=30)
+Call 40:    Identity Check (cadence=10) — Progress Check BLOCKED (original bug)
 ```
 
 ## Impact
