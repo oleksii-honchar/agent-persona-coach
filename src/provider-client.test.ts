@@ -72,8 +72,8 @@ describe("ProviderChatClient", () => {
     it("should parse valid config with model=provider/model", async () => {
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -89,8 +89,8 @@ describe("ProviderChatClient", () => {
 
     it("should log warning when model is missing", async () => {
       const sdkClient = aMockSdkClient({
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -104,8 +104,8 @@ describe("ProviderChatClient", () => {
     it("should log warning when model ref has no slash", async () => {
       const sdkClient = aMockSdkClient({
         model: "gpt4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -119,8 +119,8 @@ describe("ProviderChatClient", () => {
     it("should log warning when provider is missing", async () => {
       const sdkClient = aMockSdkClient({
         model: "anthropic/claude-3",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -134,8 +134,8 @@ describe("ProviderChatClient", () => {
     it("should log warning when baseURL is missing", async () => {
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: undefined, apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: undefined, apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -149,8 +149,8 @@ describe("ProviderChatClient", () => {
     it("should log warning when apiKey is missing", async () => {
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: undefined },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: undefined } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -169,8 +169,8 @@ describe("ProviderChatClient", () => {
             callCount++;
             return {
               model: "openai/gpt-4",
-              providers: {
-                openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+              provider: {
+                openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
               },
             };
           },
@@ -205,8 +205,8 @@ describe("ProviderChatClient", () => {
 
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -232,8 +232,8 @@ describe("ProviderChatClient", () => {
 
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -252,8 +252,8 @@ describe("ProviderChatClient", () => {
 
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -272,8 +272,8 @@ describe("ProviderChatClient", () => {
 
       const sdkClient = aMockSdkClient({
         model: "openai/gpt-4",
-        providers: {
-          openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+        provider: {
+          openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
         },
       });
       const client = new ProviderChatClient(sdkClient as any);
@@ -302,7 +302,7 @@ describe("ProviderChatClient", () => {
 
     it("should throw descriptive error when model is missing", async () => {
       const sdkClient = aMockSdkClient({
-        providers: {},
+        provider: {},
       });
       const client = new ProviderChatClient(sdkClient as any);
 
@@ -325,8 +325,8 @@ describe("ProviderChatClient", () => {
             callCount++;
             return {
               model: "openai/gpt-4",
-              providers: {
-                openai: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" },
+              provider: {
+                openai: { options: { baseURL: "https://api.openai.com/v1", apiKey: "sk-test" } },
               },
             };
           },

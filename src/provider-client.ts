@@ -42,15 +42,17 @@ export class ProviderChatClient implements ChatClient {
       const providerID = model.slice(0, slashIndex);
       const modelID = model.slice(slashIndex + 1);
 
-      const provider = config.providers?.[providerID];
+      // SDK config uses `provider` (singular) with credentials in `options`
+      // e.g. { provider: { openai: { options: { apiKey: "...", baseURL: "..." } } } }
+      const provider = config.provider?.[providerID];
       if (!provider) {
         log.warn("ProviderChatClient: provider not found in config", { providerID });
         this.cachedConfig = null;
         return null;
       }
 
-      const baseURL = provider.baseURL;
-      const apiKey = provider.apiKey;
+      const baseURL = provider.options?.baseURL;
+      const apiKey = provider.options?.apiKey;
       if (!baseURL || !apiKey) {
         log.warn("ProviderChatClient: missing baseURL or apiKey for provider", { providerID });
         this.cachedConfig = null;
