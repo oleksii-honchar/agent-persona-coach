@@ -4,11 +4,12 @@ title: "Agent Persona Coach — Internal Components"
 c4_level: component
 system: agent-persona-coach
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-10T10:00:00Z"
+updatedAt: "2026-06-10T11:50:00Z"
 tags: [plugin, c4, component]
 see_also:
   - "architectures/agent-persona-coach/containers/0001-plugin-container.container.md"
   - "specifications/0001-plugin-configuration.spec.md"
+  - "adrs/0003-per-user-message-identity-nudge.adr.md"
 linked_elements: []
 deprecated:
   date: null
@@ -32,6 +33,7 @@ C4Component
     Component(onToolAfter, "onToolAfter", "Method", "Post-tool cadence-based nudges")
     Component(updateSystemPrompt, "updateSystemPrompt", "Method", "Injects nudges into system prompt")
     Component(resolveAgentInfo, "resolveAgentInfo", "Method", "Fetches agent config from SDK client")
+    Component(buildIdentityNudge, "buildIdentityNudge", "Method", "Builds identity nudge on demand")
   }
 
   Component_Ext(cache, "CoachQuestionsCache", "Class", "In-memory question cache")
@@ -47,6 +49,7 @@ C4Component
   Rel(onToolAfter, cache, "Retrieves identity/reference/progress questions")
   Rel(onToolAfter, injector, "Formats nudges")
   Rel(updateSystemPrompt, injector, "Appends to system prompt")
+  Rel(buildIdentityNudge, cache, "Retrieves identity questions")
 ```
 
 ## Elements
@@ -58,7 +61,8 @@ C4Component
 | `onToolAfter` | onToolAfter | Component | TypeScript | Called after each tool; increments tool count, checks all cadence categories |
 | `updateSystemPrompt` | updateSystemPrompt | Component | TypeScript | Injects accumulated nudges into the last system prompt element |
 | `resolveAgentInfo` | resolveAgentInfo | Component | TypeScript | Fetches full agent config from SDK client when agentInfo is empty |
+| `buildIdentityNudge` | buildIdentityNudge | Component | TypeScript | Builds an identity nudge on demand using cached questions; used by server for per-user-message injection |
 
 ## Notes
 
-`onToolAfter` accumulates all matching nudges (not just the first) — this was a fix for the priority collision issue where identity checks were blocking progress checks. The `resolveAgentInfo` method handles both V1 (`prompt` field) and V2 (`system` field) agent info formats.
+`onToolAfter` accumulates all matching nudges (not just the first) — this was a fix for the priority collision issue where identity checks were blocking progress checks. The `resolveAgentInfo` method handles both V1 (`prompt` field) and V2 (`system` field) agent info formats. The `buildIdentityNudge` method is a focused public API that allows the server hook to format identity nudges without exposing internal `buildNudge` implementation details.

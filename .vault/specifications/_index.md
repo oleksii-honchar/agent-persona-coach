@@ -1,7 +1,7 @@
 ---
 title: "Specifications"
 createdAt: "2026-06-09T00:00:00+02:00"
-updatedAt: "2026-06-10T10:00:00Z"
+updatedAt: "2026-06-10T11:50:00Z"
 ---
 
 # Specifications

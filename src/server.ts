@@ -1,4 +1,6 @@
 import { AgentPersonaCoachPlugin } from "./index.js";
+import { ProviderChatClient } from "./provider-client.js";
+import { extractPersonaFromSystem } from "./types.js";
 import { log } from "./logger.js";
 
 // ── Plugin System Types (matching better-opencode plugin signatures) ──────────
@@ -52,31 +54,23 @@ export type Plugin = (
   options?: PluginOptions
 ) => Promise<Hooks>;
 
-// ── Server Entry Point ───────────────────────────────────────────────────────
+// ── Hook Factory (exported for testability) ──────────────────────────────────
 
 /**
- * Plugin entry point for better-opencode plugin system.
- *
- * Wires AgentPersonaCoachPlugin to better-opencode hooks:
- * - `chat.message` — Initializes session on first message (generates/caches questions)
- * - `tool.execute.before` — Injects rule compliance nudge before critical tools
- * - `tool.execute.after` — Injects identity/reference/progress nudges at cadence via output.inject
- * - `experimental.chat.system.transform` — Injects latest nudge into system prompt
- *
- * Note: `agentInfo` is passed as an empty object `{}` in the current wiring.
- * Production use requires fetching the full agent config from the SDK client.
+ * Creates the plugin hooks wired to a given AgentPersonaCoachPlugin instance.
+ * Exported so tests can pass a fully mocked plugin.
  */
-const server: Plugin = async function server(
-  pluginInput: PluginInput,
-  _options?: PluginOptions
+export async function createServerHooks(
+  plugin: AgentPersonaCoachPlugin,
+  pluginInput: PluginInput
 ): Promise<Hooks> {
-  const plugin = new AgentPersonaCoachPlugin();
-
   log.info("Plugin started");
 
-  // Per-session state: agent name and last nudges
+  // Per-session state: agent name, last nudges, and initialization tracking
   const sessionAgent = new Map<string, string>();
   const lastNudges = new Map<string, string[]>();
+  const initializedSessions = new Set<string>();
+  const pendingUserMessageIdentity = new Map<string, boolean>();
 
   return {
     /**
@@ -91,15 +85,14 @@ const server: Plugin = async function server(
       // Track agent name for this session (for use in tool hooks)
       sessionAgent.set(sessionID, agent);
 
-      // Initialize session on first message.
-      // Fetch agent info from the SDK client if available.
-      const agentInfo = await plugin.resolveAgentInfo(agent, pluginInput.client);
-      try {
-        await plugin.initializeSession(agent, agentInfo);
-        log.info(`Session ${sessionID} initialized for agent ${agent}`);
-      } catch (err) {
-        log.warn(`Failed to initialize session for agent ${agent}`, { error: err instanceof Error ? err.message : String(err) });
+      // NEW: Flag identity nudge for injection before next model response
+      if (plugin.config.categories.identity.enabled &&
+          plugin.config.categories.identity.afterEachUserMessage) {
+        pendingUserMessageIdentity.set(sessionID, true);
+        log.debug(`Identity nudge queued for session ${sessionID}`);
       }
+
+      // NOTE: initialization moved to experimental.chat.system.transform
     },
 
     /**
@@ -164,6 +157,42 @@ const server: Plugin = async function server(
       const { sessionID } = input;
       if (!sessionID) return;
 
+      const agentName = sessionAgent.get(sessionID);
+      if (!agentName) return;
+
+      // --- Lazy initialization on first LLM call ---
+      if (!initializedSessions.has(sessionID)) {
+        const personaText = extractPersonaFromSystem(output.system);
+        if (personaText) {
+          try {
+            await plugin.initializeSession(agentName, { system: personaText });
+            initializedSessions.add(sessionID);
+            log.info(`Session ${sessionID} initialized for agent ${agentName} (persona extracted from system prompt)`);
+          } catch (err) {
+            log.warn(`Failed to initialize session for agent ${agentName}`, { error: err instanceof Error ? err.message : String(err) });
+          }
+        } else {
+          log.warn(`No persona text extracted from system prompt for agent ${agentName}. Skipping.`);
+        }
+      }
+
+      // NEW: Inject identity nudge after each user message
+      if (pendingUserMessageIdentity.get(sessionID)) {
+        pendingUserMessageIdentity.delete(sessionID);
+        const nudge = plugin.buildIdentityNudge(agentName, {});
+        if (nudge) {
+          const system = output.system;
+          if (system.length > 0) {
+            system[system.length - 1] = plugin.updateSystemPrompt(
+              system[system.length - 1],
+              nudge
+            );
+            log.debug(`identity (user-message) nudge injected (session ${sessionID})`);
+          }
+        }
+      }
+
+      // --- Nudge injection ---
       const system = output.system;
       if (system.length === 0) return;
 
@@ -178,6 +207,33 @@ const server: Plugin = async function server(
       log.debug(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`);
     },
   };
+}
+
+// ── Server Entry Point ───────────────────────────────────────────────────────
+
+/**
+ * Plugin entry point for better-opencode plugin system.
+ *
+ * Wires AgentPersonaCoachPlugin to better-opencode hooks:
+ * - `chat.message` — Initializes session on first message (generates/caches questions)
+ * - `tool.execute.before` — Injects rule compliance nudge before critical tools
+ * - `tool.execute.after` — Injects identity/reference/progress nudges at cadence via output.inject
+ * - `experimental.chat.system.transform` — Injects latest nudge into system prompt
+ *
+ * Note: `agentInfo` is passed as an empty object `{}` in the current wiring.
+ * Production use requires fetching the full agent config from the SDK client.
+ */
+const server: Plugin = async function server(
+  pluginInput: PluginInput,
+  _options?: PluginOptions
+): Promise<Hooks> {
+  const plugin = new AgentPersonaCoachPlugin();
+
+  // Wire the ProviderChatClient so the generator can call the LLM
+  const chatClient = new ProviderChatClient(pluginInput.client);
+  plugin.setChatClient(chatClient);
+
+  return createServerHooks(plugin, pluginInput);
 };
 
 export default server;

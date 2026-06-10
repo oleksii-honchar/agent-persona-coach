@@ -20,7 +20,7 @@ import { log } from "./logger.js";
  * - Progress Check: every 8 tool calls (after)
  */
 export class AgentPersonaCoachPlugin {
-  private config: PluginConfig;
+  public readonly config: PluginConfig;
   private cache: CoachQuestionsCache;
   private generator: CoachGenerator;
   private stateManager: CoachStateManager;
@@ -54,49 +54,6 @@ export class AgentPersonaCoachPlugin {
       );
     }
     return this.chatClient.createCompletion(request);
-  }
-
-  // ---- Agent Info Resolution ----
-
-  /**
-   * Resolve agent info from the SDK client when agentInfo is empty.
-   * Fetches the full config from the server and extracts the agent's prompt.
-   */
-  async resolveAgentInfo(
-    agentName: string,
-    client: unknown
-  ): Promise<Record<string, unknown>> {
-    // If client is not available, return empty object
-    if (!client || typeof client !== "object") {
-      return {};
-    }
-
-    // Try to fetch agent info from the SDK client
-    try {
-      const configClient = (client as any).config;
-      if (!configClient || typeof configClient.get !== "function") {
-        return {};
-      }
-
-      const config = await configClient.get();
-      const configData = config?.data ?? config;
-
-      if (configData?.agent && typeof configData.agent === "object") {
-        const agentEntry = configData.agent[agentName];
-        if (agentEntry && typeof agentEntry === "object") {
-          log.info(`Resolved agent info for ${agentName} from SDK client`);
-          return agentEntry as Record<string, unknown>;
-        }
-      }
-
-      log.warn(`Agent ${agentName} not found in SDK client config`);
-    } catch (err) {
-      log.warn(`Failed to resolve agent info from SDK client`, {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    return {};
   }
 
   // ---- Public API ----
@@ -187,6 +144,17 @@ export class AgentPersonaCoachPlugin {
     if (!nudge) return systemPrompt;
     const nudges = Array.isArray(nudge) ? nudge : [nudge];
     return nudges.reduce((prompt, n) => injectNudge(prompt, n), systemPrompt);
+  }
+
+  /**
+   * Build an identity nudge for the given agent.
+   * Used by the server when injecting identity reminders after each user message.
+   */
+  buildIdentityNudge(
+    agentName: string,
+    agentInfo: Record<string, unknown>
+  ): string | null {
+    return this.buildNudge("identity", agentName, agentInfo);
   }
 
   // ---- Private helpers ----

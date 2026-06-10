@@ -40,7 +40,8 @@ The plugin accepts a configuration object via `AgentPersonaCoachPlugin` construc
     "categories": {
       "identity": {
         "enabled": true,
-        "cadence": 10
+        "cadence": 10,
+        "afterEachUserMessage": true
       },
       "rules": {
         "enabled": true,
@@ -68,6 +69,7 @@ The plugin accepts a configuration object via `AgentPersonaCoachPlugin` construc
 | `enabled` | `boolean` | `true` | Enable/disable the plugin |
 | `categories.identity.enabled` | `boolean` | `true` | Enable identity check nudges |
 | `categories.identity.cadence` | `number` | `10` | Inject identity check every N tool calls |
+| `categories.identity.afterEachUserMessage` | `boolean` | `true` | Inject identity check after every user message |
 | `categories.rules.enabled` | `boolean` | `true` | Enable rule compliance nudges |
 | `categories.rules.cadence` | `number` | `10` | Inject rule compliance nudge every N critical tool calls |
 | `categories.rules.criticalPermissions` | `string[]` | `["write", "bash", "task", "create"]` | MetaTool-compatible permission names that trigger rule compliance before execution |
@@ -176,6 +178,7 @@ Nudges are injected as `<system-reminder>` blocks:
 |-----------|--------|-------|
 | Model call at session start | ~960 | One-time per unique agent (cached) |
 | Per nudge injection | ~260 avg | 2-3 questions × ~40 chars + wrapper |
+| Per-user-message identity nudge | ~260 | Every user message when `afterEachUserMessage: true` |
 | Typical 40-call session | ~6,240 | 8 identity + 1 reference + ~15 rules |
 
 ## Error Handling

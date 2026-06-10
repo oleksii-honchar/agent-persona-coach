@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strictEqual } from "node:assert/strict";
-import { extractPersona, DEFAULT_CONFIG } from "./types.js";
+import { extractPersona, extractPersonaFromSystem, DEFAULT_CONFIG } from "./types.js";
 
 describe("extractPersona", () => {
   it("should extract persona from V1 agent with 'prompt' field", () => {
@@ -53,9 +53,10 @@ describe("extractPersona", () => {
 });
 
 describe("DEFAULT_CONFIG", () => {
-  it("should have identity enabled with cadence 10", () => {
+  it("should have identity enabled with cadence 10 and afterEachUserMessage true", () => {
     strictEqual(DEFAULT_CONFIG.categories.identity.enabled, true);
     strictEqual(DEFAULT_CONFIG.categories.identity.cadence, 10);
+    strictEqual(DEFAULT_CONFIG.categories.identity.afterEachUserMessage, true);
   });
 
   it("should have rules enabled with cadence 10 and criticalPermissions", () => {
@@ -75,5 +76,74 @@ describe("DEFAULT_CONFIG", () => {
   it("should have progress enabled with cadence 20", () => {
     strictEqual(DEFAULT_CONFIG.categories.progress.enabled, true);
     strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 20);
+  });
+});
+
+describe("extractPersonaFromSystem", () => {
+  it("should return only persona prompts when mixed with schemas and reminders", () => {
+    const prompts = [
+      "You are a helpful assistant.",
+      '{"type": "object", "properties": {"name": {"type": "string"}}}',
+      "<system-reminder>foo</system-reminder>",
+    ];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "You are a helpful assistant.");
+  });
+
+  it("should join multiple persona prompts with double newlines", () => {
+    const prompts = ["You are a researcher.", "Always cite sources."];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "You are a researcher.\n\nAlways cite sources.");
+  });
+
+  it("should return empty string for only schemas", () => {
+    const prompts = ['{"type": "object", "properties": {"name": {"type": "string"}}}'];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "");
+  });
+
+  it("should return empty string for only reminders", () => {
+    const prompts = ["<system-reminder>remember this</system-reminder>"];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "");
+  });
+
+  it("should return empty string for empty array", () => {
+    const result = extractPersonaFromSystem([]);
+    strictEqual(result, "");
+  });
+
+  it("should return empty string when all prompts are filtered out", () => {
+    const prompts = [
+      '{"type": "object", "properties": {"foo": {}}}',
+      "<system-reminder>bar</system-reminder>",
+      '{"type": "object", "properties": {"baz": {}}}',
+    ];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "");
+  });
+
+  it("should preserve whitespace in remaining prompts and trim final result", () => {
+    const prompts = ["  You are a coder.  ", "  Write clean code.  "];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "You are a coder.\n\nWrite clean code.");
+  });
+
+  it("should not filter <System-Reminder> (case sensitive)", () => {
+    const prompts = ["<System-Reminder>foo</System-Reminder>"];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "<System-Reminder>foo</System-Reminder>");
+  });
+
+  it("should not filter schema missing properties keyword", () => {
+    const prompts = ['{"type": "object", "title": "Foo"}'];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, '{"type": "object", "title": "Foo"}');
+  });
+
+  it("should not filter schema missing type object", () => {
+    const prompts = ['{"properties": {"name": {"type": "string"}}}'];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, '{"properties": {"name": {"type": "string"}}}');
   });
 });
