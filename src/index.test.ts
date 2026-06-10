@@ -48,6 +48,76 @@ describe("AgentPersonaCoachPlugin", () => {
     });
   });
 
+  describe("resolveAgentInfo", () => {
+    it("should return empty object when client is null", async () => {
+      const result = await plugin.resolveAgentInfo(AGENT_NAME, null);
+      deepStrictEqual(result, {});
+    });
+
+    it("should return empty object when client is not an object", async () => {
+      const result = await plugin.resolveAgentInfo(AGENT_NAME, "string" as any);
+      deepStrictEqual(result, {});
+    });
+
+    it("should return empty object when client has no config", async () => {
+      const client = { something: "else" };
+      const result = await plugin.resolveAgentInfo(AGENT_NAME, client);
+      deepStrictEqual(result, {});
+    });
+
+    it("should return empty object when config.get is not a function", async () => {
+      const client = { config: { get: "not a function" } };
+      const result = await plugin.resolveAgentInfo(AGENT_NAME, client);
+      deepStrictEqual(result, {});
+    });
+
+    it("should return empty object when agent not found in config", async () => {
+      const client = {
+        config: {
+          get: async () => ({ data: { agent: { "other-agent": { prompt: "other" } } } }),
+        },
+      };
+      const result = await plugin.resolveAgentInfo(AGENT_NAME, client);
+      deepStrictEqual(result, {});
+    });
+
+    it("should extract agent info from SDK client config", async () => {
+      const expectedAgentInfo = {
+        prompt: "You are a developer agent.",
+        description: "Implementation planner",
+        mode: "subagent",
+      };
+      const client = {
+        config: {
+          get: async () => ({ data: { agent: { "test-agent": expectedAgentInfo } } }),
+        },
+      };
+      const result = await plugin.resolveAgentInfo("test-agent", client);
+      deepStrictEqual(result, expectedAgentInfo);
+    });
+
+    it("should handle config.get returning data directly (no .data wrapper)", async () => {
+      const expectedAgentInfo = { prompt: "Direct prompt." };
+      const client = {
+        config: {
+          get: async () => ({ agent: { "test-agent": expectedAgentInfo } }),
+        },
+      };
+      const result = await plugin.resolveAgentInfo("test-agent", client);
+      deepStrictEqual(result, expectedAgentInfo);
+    });
+
+    it("should return empty object when config.get throws", async () => {
+      const client = {
+        config: {
+          get: async () => { throw new Error("Network error"); },
+        },
+      };
+      const result = await plugin.resolveAgentInfo(AGENT_NAME, client);
+      deepStrictEqual(result, {});
+    });
+  });
+
   describe("onToolAfter — cadence checks (DEFAULT_CONFIG: identity=10, references=30, progress=20)", () => {
     beforeEach(async () => {
       await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);

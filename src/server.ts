@@ -67,7 +67,7 @@ export type Plugin = (
  * Production use requires fetching the full agent config from the SDK client.
  */
 const server: Plugin = async function server(
-  _input: PluginInput,
+  pluginInput: PluginInput,
   _options?: PluginOptions
 ): Promise<Hooks> {
   const plugin = new AgentPersonaCoachPlugin();
@@ -92,10 +92,10 @@ const server: Plugin = async function server(
       sessionAgent.set(sessionID, agent);
 
       // Initialize session on first message.
-      // agentInfo is passed as {} — production use requires fetching
-      // the full agent config from the SDK client (input.client).
+      // Fetch agent info from the SDK client if available.
+      const agentInfo = await plugin.resolveAgentInfo(agent, pluginInput.client);
       try {
-        await plugin.initializeSession(agent, {});
+        await plugin.initializeSession(agent, agentInfo);
         log.info(`Session ${sessionID} initialized for agent ${agent}`);
       } catch (err) {
         log.warn(`Failed to initialize session for agent ${agent}`, { error: err instanceof Error ? err.message : String(err) });
