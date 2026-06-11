@@ -94,7 +94,7 @@ export class AgentPersonaCoachPlugin {
    */
   onToolAfter(
     sessionId: string,
-    _toolName: string,
+    toolName: string,
     _toolArgs: unknown,
     agentName: string,
     agentInfo: Record<string, unknown>
@@ -117,32 +117,18 @@ export class AgentPersonaCoachPlugin {
       if (nudge) nudges.push(nudge);
     }
 
-    return nudges;
-  }
-
-  /**
-   * Called before each tool execution.
-   * Returns a nudge string if rule compliance should be checked, or null.
-   */
-  onToolBefore(
-    sessionId: string,
-    toolName: string,
-    toolMetadata: { requiresPermission?: string },
-    agentName: string,
-    agentInfo: Record<string, unknown>
-  ): string | null {
-    // First check if the tool is critical at all (permission/name check only)
-    if (!this.stateManager.isToolCritical(toolName, toolMetadata)) return null;
-
-    // Increment critical count BEFORE cadence check (so 2nd call has count=2, 2%2=0)
-    const state = this.stateManager.incrementCriticalToolCall(sessionId);
-
-    // Check cadence: inject on every N-th critical call
-    if (this.stateManager.shouldInjectRuleCompliance(state, toolName, toolMetadata)) {
-      return this.buildNudge("rules", agentName, agentInfo);
+    // Rules logic (moved from onToolBefore)
+    // Note: isToolCritical called with undefined metadata — will return false until
+    // Task 15 fixes isToolCritical to work without metadata.
+    if (this.stateManager.isToolCritical(toolName, undefined)) {
+      const rulesState = this.stateManager.incrementCriticalToolCall(sessionId);
+      if (this.stateManager.shouldInjectRuleCompliance(rulesState, toolName, undefined)) {
+        const nudge = this.buildNudge("rules", agentName, agentInfo);
+        if (nudge) nudges.push(nudge);
+      }
     }
 
-    return null;
+    return nudges;
   }
 
   // ---- Private helpers ----

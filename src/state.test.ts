@@ -3,6 +3,14 @@ import { strictEqual, ok } from "node:assert/strict";
 import { CoachStateManager } from "./state.js";
 import { DEFAULT_CONFIG, type PluginConfig } from "./types.js";
 
+const RULES_CONFIG: PluginConfig = {
+  ...DEFAULT_CONFIG,
+  categories: {
+    ...DEFAULT_CONFIG.categories,
+    rules: { ...DEFAULT_CONFIG.categories.rules, criticalPermissions: ["write", "bash", "task", "create"] },
+  },
+};
+
 describe("CoachStateManager", () => {
   let manager: CoachStateManager;
 
@@ -196,38 +204,44 @@ describe("CoachStateManager", () => {
     });
   });
 
-  describe("shouldInjectRuleCompliance — cadence-based (DEFAULT_CONFIG cadence 10)", () => {
+  describe("shouldInjectRuleCompliance — cadence-based (RULES_CONFIG cadence 10)", () => {
+    let rulesManager: CoachStateManager;
+
+    beforeEach(() => {
+      rulesManager = new CoachStateManager(RULES_CONFIG);
+    });
+
     it("should return false at 1st critical call", () => {
       const state = { criticalToolCallCount: 1, toolCallCount: 1, referenceCheckInjected: false };
-      ok(!manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
+      ok(!rulesManager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
     it("should return true at 10th critical call (cadence 10)", () => {
       const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
-      ok(manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
+      ok(rulesManager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
     it("should return false at 5th critical call", () => {
       const state = { criticalToolCallCount: 5, toolCallCount: 5, referenceCheckInjected: false };
-      ok(!manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
+      ok(!rulesManager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
     it("should return true at 20th critical call (cadence 10)", () => {
       const state = { criticalToolCallCount: 20, toolCallCount: 20, referenceCheckInjected: false };
-      ok(manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
+      ok(rulesManager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
     it("should return false at 0 critical calls", () => {
       const state = { criticalToolCallCount: 0, toolCallCount: 0, referenceCheckInjected: false };
-      ok(!manager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
+      ok(!rulesManager.shouldInjectRuleCompliance(state, "someTool", { requiresPermission: "write" }));
     });
 
     it("should return true at 1st critical call when cadence is 1 (old behavior)", () => {
       const cadence1Config: PluginConfig = {
-        ...DEFAULT_CONFIG,
+        ...RULES_CONFIG,
         categories: {
-          ...DEFAULT_CONFIG.categories,
-          rules: { ...DEFAULT_CONFIG.categories.rules, cadence: 1 },
+          ...RULES_CONFIG.categories,
+          rules: { ...RULES_CONFIG.categories.rules, cadence: 1 },
         },
       };
       const cadence1Manager = new CoachStateManager(cadence1Config);
@@ -237,47 +251,93 @@ describe("CoachStateManager", () => {
 
     it("should return false for non-critical permission even at cadence boundary", () => {
       const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
-      ok(!manager.shouldInjectRuleCompliance(state, "readFile", { requiresPermission: "read" }));
+      ok(!rulesManager.shouldInjectRuleCompliance(state, "readFile", { requiresPermission: "read" }));
     });
 
     it("should return false for tool with no metadata and empty criticalTools", () => {
       const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
-      ok(!manager.shouldInjectRuleCompliance(state, "someHarmlessTool"));
+      ok(!rulesManager.shouldInjectRuleCompliance(state, "someHarmlessTool"));
     });
 
     it("should return false for tool with no metadata (undefined permissions)", () => {
       const state = { criticalToolCallCount: 10, toolCallCount: 10, referenceCheckInjected: false };
-      ok(!manager.shouldInjectRuleCompliance(state, "someTool", {}));
+      ok(!rulesManager.shouldInjectRuleCompliance(state, "someTool", {}));
     });
   });
 
   describe("isToolCritical — criticality only (no cadence)", () => {
+    let rulesManager: CoachStateManager;
+
+    beforeEach(() => {
+      rulesManager = new CoachStateManager(RULES_CONFIG);
+    });
+
     it("should return true for write permission via metadata", () => {
-      ok(manager.isToolCritical("someTool", { requiresPermission: "write" }));
+      ok(rulesManager.isToolCritical("someTool", { requiresPermission: "write" }));
     });
 
     it("should return true for bash permission via metadata", () => {
-      ok(manager.isToolCritical("runCmd", { requiresPermission: "bash" }));
+      ok(rulesManager.isToolCritical("runCmd", { requiresPermission: "bash" }));
     });
 
     it("should return true for task permission via metadata", () => {
-      ok(manager.isToolCritical("delegateTask", { requiresPermission: "task" }));
+      ok(rulesManager.isToolCritical("delegateTask", { requiresPermission: "task" }));
     });
 
     it("should return true for create permission via metadata", () => {
-      ok(manager.isToolCritical("createFile", { requiresPermission: "create" }));
+      ok(rulesManager.isToolCritical("createFile", { requiresPermission: "create" }));
     });
 
     it("should return false for non-critical permission via metadata", () => {
-      ok(!manager.isToolCritical("readFile", { requiresPermission: "read" }));
+      ok(!rulesManager.isToolCritical("readFile", { requiresPermission: "read" }));
     });
 
     it("should return false for tool with no metadata and empty criticalTools", () => {
-      ok(!manager.isToolCritical("someHarmlessTool"));
+      ok(!rulesManager.isToolCritical("someHarmlessTool"));
     });
 
     it("should return false for tool with no metadata (undefined permissions)", () => {
-      ok(!manager.isToolCritical("someTool", {}));
+      ok(!rulesManager.isToolCritical("someTool", {}));
+    });
+
+    // ---- Metadata-less path (Task 15) ----
+
+    it("should return true for tool name matching criticalPermissions without metadata", () => {
+      // "write" is in RULES_CONFIG.criticalPermissions; no metadata provided
+      ok(rulesManager.isToolCritical("write"));
+    });
+
+    it("should return true for tool name matching criticalPermissions without metadata (bash)", () => {
+      ok(rulesManager.isToolCritical("bash"));
+    });
+
+    it("should return true for tool name matching criticalPermissions without metadata (task)", () => {
+      ok(rulesManager.isToolCritical("task"));
+    });
+
+    it("should return true for tool name matching criticalPermissions without metadata (create)", () => {
+      ok(rulesManager.isToolCritical("create"));
+    });
+
+    it("should return false for tool name NOT in criticalPermissions without metadata", () => {
+      ok(!rulesManager.isToolCritical("readFile"));
+    });
+
+    it("should return false for tool name NOT in criticalPermissions without metadata (empty criticalTools)", () => {
+      ok(!rulesManager.isToolCritical("someHarmlessTool"));
+    });
+
+    it("should prefer requiresPermission over toolName when both are provided", () => {
+      // toolName "write" is in criticalPermissions, but requiresPermission "read" is NOT
+      // requiresPermission takes precedence
+      ok(!rulesManager.isToolCritical("write", { requiresPermission: "read" }));
+    });
+
+    it("should fall back to toolName when requiresPermission is not in criticalPermissions", () => {
+      // requiresPermission "unknown" is NOT in criticalPermissions, toolName "write" IS
+      // With the new logic: permissionName = toolMetadata?.requiresPermission ?? toolName
+      // So "unknown" is checked, not "write"
+      ok(!rulesManager.isToolCritical("write", { requiresPermission: "unknown" }));
     });
   });
 
@@ -492,10 +552,10 @@ describe("CoachStateManager", () => {
 
     it("should respect custom rules cadence of 3", () => {
       const customConfig: PluginConfig = {
-        ...DEFAULT_CONFIG,
+        ...RULES_CONFIG,
         categories: {
-          ...DEFAULT_CONFIG.categories,
-          rules: { ...DEFAULT_CONFIG.categories.rules, cadence: 3 },
+          ...RULES_CONFIG.categories,
+          rules: { ...RULES_CONFIG.categories.rules, cadence: 3 },
         },
       };
       const customManager = new CoachStateManager(customConfig);

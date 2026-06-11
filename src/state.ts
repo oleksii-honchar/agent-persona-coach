@@ -53,6 +53,10 @@ export class CoachStateManager {
   /**
    * Check if a tool is critical based on permission metadata or name.
    * Does NOT include cadence check — that's the caller's responsibility.
+   *
+   * When called without metadata (e.g. from onToolAfter), the tool name itself
+   * is checked against criticalPermissions — matching the same effective behavior
+   * as when server.ts passed { requiresPermission: toolName }.
    */
   isToolCritical(
     toolName: string,
@@ -60,13 +64,16 @@ export class CoachStateManager {
   ): boolean {
     if (!this.config.categories.rules.enabled) return false;
 
-    // Check permission tier from tool metadata (MetaTool-compatible)
-    if (toolMetadata?.requiresPermission) {
-      return this.config.categories.rules.criticalPermissions.includes(toolMetadata.requiresPermission);
+    // Resolve the permission name: metadata takes precedence, fall back to tool name
+    const permissionName = toolMetadata?.requiresPermission ?? toolName;
+
+    // Check permission tier (from metadata or tool name)
+    if (this.config.categories.rules.criticalPermissions.includes(permissionName)) {
+      return true;
     }
     // Check specific tool names from config
-    if (this.config.categories.rules.criticalTools.length > 0) {
-      return this.config.categories.rules.criticalTools.includes(toolName);
+    if (this.config.categories.rules.criticalTools.includes(toolName)) {
+      return true;
     }
     return false;
   }

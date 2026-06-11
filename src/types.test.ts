@@ -59,13 +59,10 @@ describe("DEFAULT_CONFIG", () => {
     strictEqual(DEFAULT_CONFIG.categories.identity.afterEachUserMessage, true);
   });
 
-  it("should have rules enabled with cadence 10 and criticalPermissions", () => {
+  it("should have rules enabled with cadence 10 and empty criticalPermissions", () => {
     strictEqual(DEFAULT_CONFIG.categories.rules.enabled, true);
     strictEqual(DEFAULT_CONFIG.categories.rules.cadence, 10);
-    strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("write"), true);
-    strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("bash"), true);
-    strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("task"), true);
-    strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.includes("create"), true);
+    strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.length, 0);
   });
 
   it("should have references enabled with cadence 30", () => {

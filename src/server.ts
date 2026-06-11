@@ -1,5 +1,6 @@
 import { AgentPersonaCoachPlugin } from "./index.js";
 import { ProviderChatClient } from "./provider-client.js";
+import { extractPersonaFromSystem } from "./types.js";
 
 import { log } from "./logger.js";
 
@@ -28,11 +29,6 @@ export interface Hooks {
     output: { message: unknown; parts: unknown[] }
   ) => Promise<void>;
 
-  "tool.execute.before"?: (
-    input: { tool: string; sessionID: string; callID: string },
-    output: { args: unknown }
-  ) => Promise<void>;
-
   "tool.execute.after"?: (
     input: { tool: string; sessionID: string; callID: string; args: unknown },
     output: {
@@ -41,6 +37,14 @@ export interface Hooks {
       metadata: unknown;
       inject?: Array<{ role: "user" | "system"; text: string }>;
     }
+  ) => Promise<void>;
+
+  "experimental.chat.system.transform"?: (
+    input: {
+      sessionID?: string;
+      model?: { providerID: string; id: string; [key: string]: unknown };
+    },
+    output: { system: string[] }
   ) => Promise<void>;
 }
 
@@ -61,66 +65,37 @@ export async function createServerHooks(
 ): Promise<Hooks> {
   log.info("Plugin started");
 
-  // Per-session state: agent name
+  // Per-session state
   const sessionAgent = new Map<string, string>();
+  const initializedSessions = new Set<string>();
+  const pendingUserMessageIdentity = new Map<string, boolean>();
 
   return {
     /**
      * chat.message — Fires on each user message.
-     * On first message for a session, initializes the coach
-     * (generates or retrieves cached reflection questions for the agent).
+     * Tracks the agent name for this session and flags identity nudges.
+     * Session initialization is delegated to experimental.chat.system.transform
+     * where the system prompt (including persona text) is available.
      */
     "chat.message": async (input, _output) => {
       const { sessionID, agent } = input;
       if (!agent || !sessionID) return;
 
-      // Check if this is the first message for this session before setting
-      const isFirstMessage = !sessionAgent.has(sessionID);
-
       // Track agent name for this session (for use in tool hooks)
       sessionAgent.set(sessionID, agent);
 
-      // Initialize session on first user message for this session
-      if (isFirstMessage) {
-        const model = input.model
-          ? { providerID: input.model.providerID, modelID: input.model.modelID }
-          : undefined;
-        await plugin.initializeSession?.(agent, { model }).catch((err) => {
-          log.warn(`Failed to initialize session for agent ${agent}`, { error: err instanceof Error ? err.message : String(err) });
-        });
-        log.info(`Session ${sessionID} initialized for agent ${agent}`);
+      // Flag identity nudge for injection after each user message
+      if (
+        plugin.config?.categories?.identity?.enabled &&
+        plugin.config?.categories?.identity?.afterEachUserMessage
+      ) {
+        pendingUserMessageIdentity.set(sessionID, true);
+        log.info(`Identity nudge queued for session ${sessionID}`);
       }
     },
 
-    /**
-     * tool.execute.before — Fires before each tool execution.
-     * Checks if the tool is critical (requires permission) and
-     * injects a rule compliance nudge when appropriate.
-     *
-     * The hook doesn't expose tool permission metadata, so we derive
-     * `requiresPermission` from the tool name itself (e.g., "write" tool
-     * maps to "write" permission in the criticalPermissions config).
-     */
-    "tool.execute.before": async (input, _output) => {
-      const { tool, sessionID } = input;
-      const agentName = sessionAgent.get(sessionID) ?? "";
-
-      // Derive permission from tool name — matches criticalPermissions
-      // like ["write", "bash", "task", "create"] in DEFAULT_CONFIG.
-      const nudge = plugin.onToolBefore?.(
-        sessionID,
-        tool,
-        { requiresPermission: tool },
-        agentName,
-        {}
-      ) ?? null;
-
-      // Note: nudge is no longer injected into system prompt — only tracked for potential future use
-      log.info(`${tool} → rules nudge triggered (session ${sessionID})`, { nudge });
-    },
-
-    /**
-     * tool.execute.after — Fires after each tool execution.
+   /**
+      * tool.execute.after — Fires after each tool execution.
      * Checks cadence-based categories (identity, references, progress)
      * and injects the nudge as a synthetic system message via output.inject.
      */
@@ -141,6 +116,44 @@ export async function createServerHooks(
       }
     },
 
+    /**
+     * experimental.chat.system.transform — Fires on each LLM call, before the
+     * system prompt is sent to the model. Used for persona extraction and
+     * session initialization only (no nudge injection).
+     *
+     * This hook is the only place with access to the actual system prompt
+     * content (output.system: string[]), which is required to extract the
+     * persona text for initializeSession.
+     */
+    "experimental.chat.system.transform": async (input, output) => {
+      const { sessionID } = input;
+      if (!sessionID) return;
+
+      const agentName = sessionAgent.get(sessionID);
+      if (!agentName) return;
+
+      // Initialize session on first LLM call for this session
+      if (!initializedSessions.has(sessionID)) {
+        const personaText = extractPersonaFromSystem(output.system);
+        if (personaText) {
+          try {
+            const model = input.model
+              ? { providerID: input.model.providerID, modelID: input.model.id }
+              : undefined;
+            await plugin.initializeSession?.(agentName, { system: personaText, model }).catch((err) => {
+              log.warn(`Failed to initialize session for agent ${agentName}`, { error: err instanceof Error ? err.message : String(err) });
+            });
+            initializedSessions.add(sessionID);
+            log.info(`Session ${sessionID} initialized for agent ${agentName}`);
+          } catch (err) {
+            log.warn(`Failed to initialize session for agent ${agentName}`, { error: err instanceof Error ? err.message : String(err) });
+          }
+        } else {
+          log.warn(`No persona text extracted from system prompt for agent ${agentName}. Skipping.`);
+        }
+      }
+    },
+
   };
 }
 
@@ -149,10 +162,10 @@ export async function createServerHooks(
 /**
  * Plugin entry point for better-opencode plugin system.
  *
- * Wires AgentPersonaCoachPlugin to better-opencode hooks:
- * - `chat.message` — Initializes session on first message (generates/caches questions)
- * - `tool.execute.before` — Checks rule compliance before critical tools
- * - `tool.execute.after` — Injects identity/reference/progress nudges at cadence via output.inject
+* Wires AgentPersonaCoachPlugin to better-opencode hooks:
+   * - `chat.message` — Tracks agent name + flags identity nudges (no initialization)
+   * - `tool.execute.after` — Injects identity/reference/progress/rules nudges at cadence via output.inject
+   * - `experimental.chat.system.transform` — Extracts persona from system prompt and initializes session
  *
  * Note: `agentInfo` is passed as an empty object `{}` in the current wiring.
  * Production use requires fetching the full agent config from the SDK client.

@@ -98,115 +98,72 @@ describe("AgentPersonaCoachPlugin", () => {
     });
   });
 
-  describe("onToolBefore — rule compliance (cadence-based, DEFAULT_CONFIG cadence 10)", () => {
+  describe("onToolAfter — rules logic", () => {
     beforeEach(async () => {
       await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
     });
 
-    it("should inject rules nudge on 10th critical call (DEFAULT_CONFIG cadence 10)", () => {
-      for (let i = 0; i < 9; i++) {
-        const r = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-        strictEqual(r, null);
+    it("should not have onToolBefore method (moved to onToolAfter)", () => {
+      strictEqual(typeof (plugin as any).onToolBefore, "undefined", "onToolBefore should not exist on plugin");
+    });
+
+    it("should not trigger rules nudge when criticalPermissions is empty (DEFAULT_CONFIG)", () => {
+      // DEFAULT_CONFIG has criticalPermissions: [] — "write" is NOT critical
+      for (let i = 0; i < 10; i++) {
+        const result = plugin.onToolAfter(SESSION_ID, "write", {}, AGENT_NAME, AGENT_INFO_V1);
+        ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger at call ${i + 1} (empty criticalPermissions)`);
       }
-
-      const r10 = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r10 !== null);
-      ok(r10!.includes("Rule Compliance"));
-      ok(r10!.includes("Am I following my constraints?"));
     });
 
-    it("should skip nudge on 1st critical call", () => {
-      const result = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(result, null);
-    });
-
-    it("should inject rules nudge for bash permission on cadence", () => {
-      for (let i = 0; i < 9; i++) {
-        const r = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
-        strictEqual(r, null);
+    it("should not trigger rules nudge for non-critical tool", () => {
+      for (let i = 0; i < 10; i++) {
+        const result = plugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
+        ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger for read at call ${i + 1}`);
       }
-
-      const r10 = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r10 !== null);
-      ok(r10!.includes("Rule Compliance"));
     });
 
-    it("should return null for non-critical tool", () => {
-      const result = plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(result, null);
-    });
-
-    it("should return null for tool without critical permission metadata", () => {
-      const result = plugin.onToolBefore(SESSION_ID, "someTool", {}, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(result, null);
-    });
-
-    it("should not advance critical counter on non-critical tools", () => {
-      plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
-
-      const r = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(r, null);
-
-      for (let i = 0; i < 8; i++) {
-        const r = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-        strictEqual(r, null);
-      }
-
-      const r10 = plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r10 !== null);
-    });
-
-    it("should mix critical and non-critical tools correctly", () => {
-      plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-
-      plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
-      plugin.onToolBefore(SESSION_ID, "read", { requiresPermission: "read" }, AGENT_NAME, AGENT_INFO_V1);
-
-      for (let i = 0; i < 8; i++) {
-        const r = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
-        strictEqual(r, null);
-      }
-
-      const r = plugin.onToolBefore(SESSION_ID, "bash", { requiresPermission: "bash" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r !== null);
-      ok(r!.includes("Rule Compliance"));
-    });
-
-    it("should respect cadence 2 (every 2 critical calls)", async () => {
-      const cadence2MockClient = aMockChatClient(VALID_JSON_RESPONSE);
-      const cadence2Plugin = new AgentPersonaCoachPlugin({
+    it("should trigger rules nudge at cadence when criticalPermissions includes tool name", async () => {
+      // Plugin with criticalPermissions: ["write"] — "write" IS critical
+      const rulesPlugin = new AgentPersonaCoachPlugin({
         categories: {
-          ...DEFAULT_CONFIG.categories,
-          rules: { ...DEFAULT_CONFIG.categories.rules, cadence: 2 },
+          identity: { enabled: false, cadence: 10, afterEachUserMessage: true },
+          rules: { enabled: true, cadence: 10, criticalPermissions: ["write"], criticalTools: [] },
+          references: { enabled: false, cadence: 30 },
+          progress: { enabled: false, cadence: 20 },
         },
       });
-      cadence2Plugin.setChatClient(cadence2MockClient);
-      await cadence2Plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+      const rulesMockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      rulesPlugin.setChatClient(rulesMockClient);
+      await rulesPlugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
 
-      const r1 = cadence2Plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      strictEqual(r1, null);
+      // Calls 1-9 — no rules nudge (below cadence)
+      for (let i = 0; i < 9; i++) {
+        const result = rulesPlugin.onToolAfter(SESSION_ID, "write", {}, AGENT_NAME, AGENT_INFO_V1);
+        ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger below cadence at call ${i + 1}`);
+      }
 
-      const r2 = cadence2Plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r2 !== null);
-      ok(r2!.includes("Rule Compliance"));
+      // Call 10 — rules nudge fires at cadence 10
+      const result = rulesPlugin.onToolAfter(SESSION_ID, "write", {}, AGENT_NAME, AGENT_INFO_V1);
+      ok(result.some(n => n.includes("Rule Compliance")), "Rules nudge should trigger at cadence 10");
     });
 
-    it("should respect cadence 1 (every call — old behavior)", async () => {
-      const cadence1MockClient = aMockChatClient(VALID_JSON_RESPONSE);
-      const cadence1Plugin = new AgentPersonaCoachPlugin({
+    it("should not trigger rules nudge for non-critical tool even with criticalPermissions set", async () => {
+      const rulesPlugin = new AgentPersonaCoachPlugin({
         categories: {
-          ...DEFAULT_CONFIG.categories,
-          rules: { ...DEFAULT_CONFIG.categories.rules, cadence: 1 },
+          identity: { enabled: false, cadence: 10, afterEachUserMessage: true },
+          rules: { enabled: true, cadence: 10, criticalPermissions: ["write"], criticalTools: [] },
+          references: { enabled: false, cadence: 30 },
+          progress: { enabled: false, cadence: 20 },
         },
       });
-      cadence1Plugin.setChatClient(cadence1MockClient);
-      await cadence1Plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+      const rulesMockClient2 = aMockChatClient(VALID_JSON_RESPONSE);
+      rulesPlugin.setChatClient(rulesMockClient2);
+      await rulesPlugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
 
-      const r1 = cadence1Plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r1 !== null);
-
-      const r2 = cadence1Plugin.onToolBefore(SESSION_ID, "write", { requiresPermission: "write" }, AGENT_NAME, AGENT_INFO_V1);
-      ok(r2 !== null);
+      for (let i = 0; i < 10; i++) {
+        const result = rulesPlugin.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1);
+        ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger for read at call ${i + 1}`);
+      }
     });
   });
 
