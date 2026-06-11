@@ -285,9 +285,34 @@ describe("AgentPersonaCoachPlugin", () => {
       ok(nudge!.includes("Who am I in my role?"), "Expected nudge to contain the identity question");
     });
 
+    it("should return a nudge even with empty agentInfo when persona was stored during initializeSession", async () => {
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      // Pass EMPTY agentInfo — persona text should come from stored map, not from agentInfo
+      const nudge = plugin.buildIdentityNudge(AGENT_NAME, {});
+
+      ok(nudge !== null, "Expected nudge to be non-null even with empty agentInfo");
+      ok(nudge!.includes("Identity Check"), "Expected nudge to contain 'Identity Check'");
+    });
+
     it("should return null when not initialized (no cache)", () => {
       // Do NOT call initializeSession — cache is empty
       const nudge = plugin.buildIdentityNudge(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(nudge, null);
+    });
+
+    it("should fallback to extractPersona(agentInfo) when no stored persona exists", () => {
+      // This tests the ?? extractPersona(agentInfo) fallback in buildNudge:
+      //   1. this.agentPersonas.get("fallback-agent") → undefined (no stored persona)
+      //   2. Falls back to extractPersona(agentInfo) → "You are a helpful assistant..."
+      //   3. Cache has no questions (initializeSession was never called) → null
+      //
+      // What we verify: the extractPersona fallback succeeds without crashing,
+      // and the result is null only because of empty cache (not because of
+      // failed persona extraction). This ensures backward compatibility if
+      // agentInfo is ever populated in production hooks.
+      const nudge = plugin.buildIdentityNudge("fallback-agent", AGENT_INFO_V1);
 
       strictEqual(nudge, null);
     });

@@ -24,6 +24,7 @@ export class AgentPersonaCoachPlugin {
   private cache: CoachQuestionsCache;
   private generator: CoachGenerator;
   private stateManager: CoachStateManager;
+  private agentPersonas = new Map<string, string>();
 
   constructor(config: Partial<PluginConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -71,6 +72,8 @@ export class AgentPersonaCoachPlugin {
       log.warn(`No persona text found for agent ${agentName}. Skipping.`);
       return;
     }
+
+    this.agentPersonas.set(agentName, personaText);
 
     // Generate or retrieve cached questions
     const questions = await this.cache.getOrGenerate(
@@ -184,7 +187,7 @@ export class AgentPersonaCoachPlugin {
     agentName: string,
     agentInfo: Record<string, unknown>
   ): string | null {
-    const personaText = extractPersona(agentInfo);
+    const personaText = this.agentPersonas.get(agentName) ?? extractPersona(agentInfo);
     if (!personaText) return null;
 
     const questions = this.cache.get(agentName, personaText);
@@ -200,6 +203,7 @@ export class AgentPersonaCoachPlugin {
    */
   invalidateCache(agentName: string): void {
     this.cache.invalidate(agentName);
+    this.agentPersonas.delete(agentName);
   }
 
   /**

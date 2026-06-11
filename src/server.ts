@@ -120,7 +120,7 @@ export async function createServerHooks(
 
       if (nudge) {
         lastNudges.set(sessionID, [nudge]);
-        log.info(`${tool} → rules nudge injected (session ${sessionID})`);
+        log.info(`${tool} → rules nudge injected (session ${sessionID})`, { nudge });
       }
     },
 
@@ -141,7 +141,7 @@ export async function createServerHooks(
         const categories = nudges
           .map(n => n.includes("Identity") ? "identity" : n.includes("Progress") ? "progress" : n.includes("Reference") ? "references" : "?")
           .join(", ");
-        log.info(`${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`);
+        log.info(`${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`, { nudges });
 
         // Inject each nudge as a separate synthetic system message
         output.inject = nudges.map(text => ({ role: "system" as const, text }));
@@ -180,35 +180,24 @@ export async function createServerHooks(
         }
       }
 
-      // NEW: Inject identity nudge after each user message
+      // Inject identity nudge after each user message
       if (pendingUserMessageIdentity.get(sessionID)) {
         pendingUserMessageIdentity.delete(sessionID);
         const nudge = plugin.buildIdentityNudge?.(agentName, {});
         if (nudge) {
-          const system = output.system;
-          if (system.length > 0) {
-            system[system.length - 1] = plugin.updateSystemPrompt?.(
-              system[system.length - 1],
-              nudge
-            ) ?? system[system.length - 1];
-            log.info(`identity (user-message) nudge injected (session ${sessionID})`);
-          }
+          output.system.push(nudge);
+          log.info(`identity (user-message) nudge injected (session ${sessionID})`, { nudge });
         }
       }
 
       // --- Nudge injection ---
-      const system = output.system;
-      if (system.length === 0) return;
-
       const nudges = lastNudges.get(sessionID);
       if (!nudges || nudges.length === 0) return;
 
-      // Inject all nudges into the last system prompt element
-      system[system.length - 1] = plugin.updateSystemPrompt?.(
-        system[system.length - 1],
-        nudges
-      ) ?? system[system.length - 1];
-      log.info(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`);
+      for (const n of nudges) {
+        output.system.push(n);
+      }
+      log.info(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`, { nudges });
     },
   };
 }

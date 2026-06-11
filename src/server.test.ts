@@ -293,7 +293,7 @@ describe("server", () => {
 
         // The system prompt should have been updated with the nudge
         ok(
-          output.system[0].includes("Rules nudge"),
+          output.system.some(s => s.includes("Rules nudge")),
           "system prompt should contain injected nudge"
         );
       } finally {
@@ -442,7 +442,7 @@ describe("server", () => {
       );
 
       ok(
-        output.system[0].includes("Identity Check"),
+        output.system.some(s => s.includes("Identity Check")),
         "system prompt should contain identity nudge after user message"
       );
     });
@@ -463,7 +463,7 @@ describe("server", () => {
         { sessionID: "sess-1", model: {} } as any,
         output1
       );
-      ok(output1.system[0].includes("Identity Check"), "first transform should inject nudge");
+      ok(output1.system.some(s => s.includes("Identity Check")), "first transform should inject nudge");
 
       // Second system transform — no new user message, flag should be gone
       const output2 = { system: ["You are a helpful assistant."] };
@@ -581,7 +581,11 @@ describe("server", () => {
         { sessionID: "sess-1", model: {} } as any,
         output1
       );
-      deepStrictEqual(output1.system, [], "no system prompt to inject into");
+      // Nudge is pushed to empty array (push works on []), so system should have content
+      ok(
+        output1.system.some(s => s.includes("Identity Check")),
+        "nudge should be pushed even when system was empty"
+      );
 
       // Second transform — flag should be cleared, no injection
       const output2 = { system: ["You are a helpful assistant."] };
@@ -615,7 +619,7 @@ describe("server", () => {
         output1
       );
 
-      ok(output1.system[0].includes("Identity Check"), "session 1 should get nudge");
+      ok(output1.system.some(s => s.includes("Identity Check")), "session 1 should get nudge");
 
       // Session 2 should still have flag set
       const output2 = { system: ["Persona B"] };
@@ -624,7 +628,7 @@ describe("server", () => {
         output2
       );
 
-      ok(output2.system[0].includes("Identity Check"), "session 2 should also get nudge");
+      ok(output2.system.some(s => s.includes("Identity Check")), "session 2 should also get nudge");
     });
 
     it("should inject both user-message identity nudge and cadence nudge in same turn", async () => {
@@ -653,13 +657,178 @@ describe("server", () => {
       );
 
       ok(
-        output.system[0].includes("Identity Check"),
+        output.system.some(s => s.includes("Identity Check")),
         "should contain identity nudge from user-message"
       );
       ok(
-        output.system[0].includes("Rule Compliance"),
+        output.system.some(s => s.includes("Rule Compliance")),
         "should contain rules nudge from cadence"
       );
+    });
+  });
+
+  describe("nudge content in log messages (Task 8)", () => {
+    /**
+     * Helper: create a plugin with identity nudge support
+     * (mirrors aMockPlugin from pendingUserMessageIdentity scope)
+     */
+    function aMockPluginForLog(overrides: Partial<AgentPersonaCoachPlugin> = {}): AgentPersonaCoachPlugin {
+      const plugin = new AgentPersonaCoachPlugin();
+      return {
+        ...plugin,
+        config: {
+          ...plugin.config,
+          categories: {
+            ...plugin.config.categories,
+            identity: {
+              ...plugin.config.categories.identity,
+              enabled: true,
+              afterEachUserMessage: true,
+              ...overrides.config?.categories?.identity,
+            },
+          },
+        },
+        initializeSession: async () => {},
+        buildIdentityNudge: () => "<system-reminder>Identity Check: Who am I?</system-reminder>",
+        updateSystemPrompt: (system: string, nudges: string | string[]) =>
+          `${system}\n${Array.isArray(nudges) ? nudges.join("\n") : nudges}`,
+        ...overrides,
+      } as AgentPersonaCoachPlugin;
+    }
+
+    it("L123 — tool.execute.before log should include { nudge } as extra param", async () => {
+      const originalOnToolBefore = AgentPersonaCoachPlugin.prototype.onToolBefore;
+      AgentPersonaCoachPlugin.prototype.onToolBefore = function () {
+        return "<system-reminder>Rules nudge: remember the rules.</system-reminder>";
+      };
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
+
+      try {
+        const hooks = await server(aMockPluginInput() as any);
+
+        await hooks["chat.message"]!(
+          { sessionID: "sess-log", agent: "test-agent" } as any,
+          { message: "", parts: [] }
+        );
+
+        await hooks["tool.execute.before"]!(
+          { tool: "write", sessionID: "sess-log", callID: "call-1" } as any,
+          { args: {} }
+        );
+
+        ok(
+          capturedStderr.some(line => line.includes("nudge=") && line.includes("rules nudge injected")),
+          "tool.execute.before log should contain nudge= as extra param"
+        );
+      } finally {
+        AgentPersonaCoachPlugin.prototype.onToolBefore = originalOnToolBefore;
+      }
+    });
+
+    it("L144 — tool.execute.after log should include { nudges } as extra param", async () => {
+      const originalOnToolAfter = AgentPersonaCoachPlugin.prototype.onToolAfter;
+      AgentPersonaCoachPlugin.prototype.onToolAfter = function () {
+        return ["<system-reminder>Identity Check: stay focused!</system-reminder>"];
+      };
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
+
+      try {
+        const hooks = await server(aMockPluginInput() as any);
+
+        await hooks["chat.message"]!(
+          { sessionID: "sess-log-2", agent: "test-agent" } as any,
+          { message: "", parts: [] }
+        );
+
+        const output: any = { title: "", output: "", metadata: {}, inject: [] };
+        await hooks["tool.execute.after"]!(
+          { tool: "read", sessionID: "sess-log-2", callID: "call-2", args: {} } as any,
+          output
+        );
+
+        ok(
+          capturedStderr.some(line => line.includes("nudges=") && line.includes("nudge") && !line.includes("rules nudge injected")),
+          "tool.execute.after log should contain nudges= as extra param"
+        );
+      } finally {
+        AgentPersonaCoachPlugin.prototype.onToolAfter = originalOnToolAfter;
+      }
+    });
+
+    it("L194 — system.transform identity log should include { nudge } as extra param", async () => {
+      const plugin = aMockPluginForLog();
+      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
+
+      await hooks["chat.message"]!(
+        { sessionID: "sess-log-3", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      const output = { system: ["You are a helpful assistant."] };
+      await hooks["experimental.chat.system.transform"]!(
+        { sessionID: "sess-log-3", model: {} } as any,
+        output
+      );
+
+      ok(
+        capturedStderr.some(line => line.includes("nudge=") && line.includes("identity") && line.includes("nudge injected")),
+        "system.transform identity log should contain nudge= as extra param"
+      );
+    });
+
+    it("L211 — system.transform update log should include { nudges } as extra param", async () => {
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
+      const originalOnToolBefore = AgentPersonaCoachPlugin.prototype.onToolBefore;
+      AgentPersonaCoachPlugin.prototype.onToolBefore = function () {
+        return "<system-reminder>Cadence nudge: keep going!</system-reminder>";
+      };
+
+      try {
+        const hooks = await server(aMockPluginInput() as any);
+
+        await hooks["chat.message"]!(
+          { sessionID: "sess-log-4", agent: "test-agent" } as any,
+          { message: "", parts: [] }
+        );
+
+        await hooks["tool.execute.before"]!(
+          { tool: "bash", sessionID: "sess-log-4", callID: "call-4" } as any,
+          { args: {} }
+        );
+
+        const output = { system: ["You are a helpful assistant."] };
+        await hooks["experimental.chat.system.transform"]!(
+          { sessionID: "sess-log-4", model: {} } as any,
+          output
+        );
+
+        ok(
+          capturedStderr.some(line => line.includes("nudges=") && line.includes("system prompt updated")),
+          "system.transform update log should contain nudges= as extra param"
+        );
+      } finally {
+        AgentPersonaCoachPlugin.prototype.onToolBefore = originalOnToolBefore;
+      }
+    });
+
+    it("L92 — chat.message queued log should NOT have extra params (no nudge/nudges)", async () => {
+      const plugin = aMockPluginForLog();
+      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
+
+      await hooks["chat.message"]!(
+        { sessionID: "sess-log-5", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      const queuedLines = capturedStderr.filter(line => line.includes("Identity nudge queued"));
+      ok(queuedLines.length > 0, "should have identity nudge queued log");
+
+      for (const line of queuedLines) {
+        ok(
+          !line.includes("nudge=") && !line.includes("nudges="),
+          `chat.message queued log should NOT have extra params (got: ${line})`
+        );
+      }
     });
   });
 });

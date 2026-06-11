@@ -117,7 +117,7 @@ function format(
       } else if (typeof value === "object") {
         tags.push(`${key}=${JSON.stringify(value)}`);
       } else {
-        tags.push(`${key}=${value}`);
+        tags.push(`${key}=${JSON.stringify(value)}`);
       }
     }
   }
