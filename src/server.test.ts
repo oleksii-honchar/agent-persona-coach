@@ -82,16 +82,30 @@ describe("server", () => {
       ok(setChatClientCalled, "setChatClient should be called");
       ok(chatClientArg, "chatClient should be provided");
       ok(typeof hooks["chat.message"] === "function");
-      ok(typeof hooks["experimental.chat.system.transform"] === "function");
+      ok(typeof hooks["tool.execute.before"] === "function");
+      ok(typeof hooks["tool.execute.after"] === "function");
+      // experimental.chat.system.transform should NOT exist
+      strictEqual(
+        (hooks as any)["experimental.chat.system.transform"],
+        undefined,
+        "experimental.chat.system.transform should not be defined"
+      );
     });
   });
 
   describe("chat.message hook", () => {
-    it("should only store agent name, not call initializeSession", async () => {
+    it("should call initializeSession on first user message for a session", async () => {
       let initCalled = false;
+      let initAgent: string | undefined;
+      let initInfo: Record<string, unknown> | undefined;
 
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
+        agent: string,
+        info: Record<string, unknown>
+      ) {
         initCalled = true;
+        initAgent = agent;
+        initInfo = info;
       };
 
       const hooks = await server(aMockPluginInput() as any);
@@ -100,7 +114,93 @@ describe("server", () => {
         { message: "", parts: [] }
       );
 
-      strictEqual(initCalled, false, "initializeSession should not be called");
+      strictEqual(initCalled, true, "initializeSession should be called on first message");
+      strictEqual(initAgent, "test-agent");
+      // model should be undefined since we didn't pass it
+      strictEqual(initInfo?.model, undefined);
+    });
+
+    it("should call initializeSession with model when model is provided", async () => {
+      let initCalled = false;
+      let initAgent: string | undefined;
+      let initInfo: Record<string, unknown> | undefined;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
+        agent: string,
+        info: Record<string, unknown>
+      ) {
+        initCalled = true;
+        initAgent = agent;
+        initInfo = info;
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+      await hooks["chat.message"]!(
+        {
+          sessionID: "sess-model",
+          agent: "test-agent",
+          model: { providerID: "puma", modelID: "qwopus3.6" },
+        } as any,
+        { message: "", parts: [] }
+      );
+
+      strictEqual(initCalled, true, "initializeSession should be called");
+      strictEqual(initAgent, "test-agent");
+      ok(initInfo?.model !== undefined, "model should be passed to initializeSession");
+      strictEqual((initInfo!.model as any).providerID, "puma");
+      strictEqual((initInfo!.model as any).modelID, "qwopus3.6");
+    });
+
+    it("should call initializeSession exactly once per session (idempotent)", async () => {
+      let initCallCount = 0;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+        initCallCount++;
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // First message for sess-1 — should init
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+      strictEqual(initCallCount, 1, "first message should initialize");
+
+      // Second message for sess-1 — should NOT init again
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+      strictEqual(initCallCount, 1, "second message should NOT re-initialize");
+    });
+
+    it("should initialize each session independently", async () => {
+      const initCalls: Array<{ agent: string }> = [];
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
+        agent: string
+      ) {
+        initCalls.push({ agent });
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Session 1
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "agent-a" } as any,
+        { message: "", parts: [] }
+      );
+
+      // Session 2
+      await hooks["chat.message"]!(
+        { sessionID: "sess-2", agent: "agent-b" } as any,
+        { message: "", parts: [] }
+      );
+
+      strictEqual(initCalls.length, 2, "initializeSession should be called for each session");
+      strictEqual(initCalls[0].agent, "agent-a");
+      strictEqual(initCalls[1].agent, "agent-b");
     });
 
     it("should do nothing when agent is missing", async () => {
@@ -134,696 +234,54 @@ describe("server", () => {
 
       strictEqual(initCalled, false, "initializeSession should not be called without sessionID");
     });
-  });
 
-  describe("experimental.chat.system.transform hook", () => {
-    it("should initialize session on first call with extracted persona", async () => {
-      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
-        agent: string,
-        info: Record<string, unknown>
-      ) {
-        initCalls.push({ agent, info });
-      };
-
-      const hooks = await server(aMockPluginInput() as any);
-
-      // First, set the agent via chat.message
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      // Then call system.transform with persona text
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      strictEqual(initCalls.length, 1, "initializeSession should be called once");
-      strictEqual(initCalls[0].agent, "test-agent");
-      strictEqual(initCalls[0].info.system, "You are a helpful assistant.");
-    });
-
-    it("should be idempotent — skip initialization on second call", async () => {
-      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
-        agent: string,
-        info: Record<string, unknown>
-      ) {
-        initCalls.push({ agent, info });
-      };
-
-      const hooks = await server(aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      strictEqual(initCalls.length, 1, "initializeSession should be called exactly once");
-    });
-
-    it("should log warning and skip when persona text is empty", async () => {
-      let initCalled = false;
-
+    it("should handle initializeSession rejection gracefully", async () => {
       AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
-        initCalled = true;
+        throw new Error("Simulated init failure");
       };
 
       const hooks = await server(aMockPluginInput() as any);
 
+      // Should not throw — the error should be caught and logged
       await hooks["chat.message"]!(
         { sessionID: "sess-1", agent: "test-agent" } as any,
         { message: "", parts: [] }
       );
 
-      const output = { system: ['{"type": "object", "properties": {}}'] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      strictEqual(initCalled, false, "initializeSession should not be called for empty persona");
+      // Verify warning was logged
       ok(
-        capturedStderr.some((line) => /no persona text extracted/i.test(line)),
-        "should log warning about empty persona"
+        capturedStderr.some((line) => /failed to initialize/i.test(line)),
+        "should log warning on initialization failure"
       );
     });
 
-    it("should exit early when no agent is mapped for the session", async () => {
-      let initCalled = false;
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
-        initCalled = true;
-      };
+    it("should still track agent (not init) when initializeSession is not defined on plugin", async () => {
+      AgentPersonaCoachPlugin.prototype.initializeSession = undefined as any;
 
       const hooks = await server(aMockPluginInput() as any);
 
-      // Do NOT call chat.message first — no agent mapped
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
+      // Should not throw
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
       );
 
-      strictEqual(initCalled, false, "initializeSession should not be called without mapped agent");
-    });
-
-    it("should exit early when sessionID is missing", async () => {
-      let initCalled = false;
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
-        initCalled = true;
-      };
-
-      const hooks = await server(aMockPluginInput() as any);
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { model: {} } as any,
-        output
-      );
-
-      strictEqual(initCalled, false, "initializeSession should not be called without sessionID");
-    });
-
-    it("should still inject nudges after initialization", async () => {
-      // Mock initializeSession to do nothing (we're testing nudge injection)
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
-      // Mock onToolBefore to return a test nudge so lastNudges gets populated
+      // Tool hooks should still work (agent is stored)
       const originalOnToolBefore = AgentPersonaCoachPlugin.prototype.onToolBefore;
       AgentPersonaCoachPlugin.prototype.onToolBefore = function () {
-        return "<system-reminder>Rules nudge: remember the rules.</system-reminder>";
+        return "<system-reminder>Rules nudge</system-reminder>";
       };
 
       try {
-        const hooks = await server(aMockPluginInput() as any);
-
-        await hooks["chat.message"]!(
-          { sessionID: "sess-1", agent: "test-agent" } as any,
-          { message: "", parts: [] }
-        );
-
-        // Inject a nudge via tool.execute.before
+        // Should not throw on tool hooks that need sessionAgent
         await hooks["tool.execute.before"]!(
           { tool: "write", sessionID: "sess-1", callID: "call-1" } as any,
           { args: {} }
         );
-
-        // Call system.transform — should init AND inject nudge
-        const output = { system: ["You are a helpful assistant."] };
-        await hooks["experimental.chat.system.transform"]!(
-          { sessionID: "sess-1", model: {} } as any,
-          output
-        );
-
-        // The system prompt should have been updated with the nudge
-        ok(
-          output.system[0].includes("Rules nudge"),
-          "system prompt should contain injected nudge"
-        );
+        // Just verify no crash
+        ok(true, "tool.execute.before should not crash");
       } finally {
         AgentPersonaCoachPlugin.prototype.onToolBefore = originalOnToolBefore;
-      }
-    });
-
-    it("should initialize a second session independently", async () => {
-      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
-        agent: string,
-        info: Record<string, unknown>
-      ) {
-        initCalls.push({ agent, info });
-      };
-
-      const hooks = await server(aMockPluginInput() as any);
-
-      // Session 1
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "agent-a" } as any,
-        { message: "", parts: [] }
-      );
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        { system: ["Persona A"] }
-      );
-
-      // Session 2
-      await hooks["chat.message"]!(
-        { sessionID: "sess-2", agent: "agent-b" } as any,
-        { message: "", parts: [] }
-      );
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-2", model: {} } as any,
-        { system: ["Persona B"] }
-      );
-
-      strictEqual(initCalls.length, 2, "initializeSession should be called for each session");
-      strictEqual(initCalls[0].agent, "agent-a");
-      strictEqual(initCalls[0].info.system, "Persona A");
-      strictEqual(initCalls[1].agent, "agent-b");
-      strictEqual(initCalls[1].info.system, "Persona B");
-    });
-
-    it("should pass input.model to initializeSession when model is provided", async () => {
-      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
-        agent: string,
-        info: Record<string, unknown>
-      ) {
-        initCalls.push({ agent, info });
-      };
-
-      const hooks = await server(aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        {
-          sessionID: "sess-1",
-          model: { providerID: "puma", id: "qwopus3.6" },
-        } as any,
-        output
-      );
-
-      strictEqual(initCalls.length, 1);
-      ok(initCalls[0].info.model !== undefined, "model should be passed to initializeSession");
-      strictEqual((initCalls[0].info.model as any).providerID, "puma");
-      strictEqual((initCalls[0].info.model as any).modelID, "qwopus3.6");
-    });
-
-    it("should handle undefined input.model without crashing", async () => {
-      const initCalls: Array<{ agent: string; info: Record<string, unknown> }> = [];
-
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function (
-        agent: string,
-        info: Record<string, unknown>
-      ) {
-        initCalls.push({ agent, info });
-      };
-
-      const hooks = await server(aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1" } as any,
-        output
-      );
-
-      strictEqual(initCalls.length, 1);
-      strictEqual(initCalls[0].info.model, undefined, "model should be undefined when input.model is missing");
-    });
-  });
-
-  describe("createServerHooks — pendingUserMessageIdentity", () => {
-    function aMockPlugin(overrides: Partial<AgentPersonaCoachPlugin> = {}): AgentPersonaCoachPlugin {
-      const plugin = new AgentPersonaCoachPlugin();
-      return {
-        ...plugin,
-        config: {
-          ...plugin.config,
-          categories: {
-            ...plugin.config.categories,
-            identity: {
-              ...plugin.config.categories.identity,
-              enabled: true,
-              afterEachUserMessage: true,
-              ...overrides.config?.categories?.identity,
-            },
-          },
-        },
-        initializeSession: async () => {},
-        buildIdentityNudge: () => "<system-reminder>Identity Check: Who am I?</system-reminder>",
-        updateSystemPrompt: (system: string, nudges: string | string[]) =>
-          `${system}\n${Array.isArray(nudges) ? nudges.join("\n") : nudges}`,
-        ...overrides,
-      } as AgentPersonaCoachPlugin;
-    }
-
-    it("should queue identity nudge on chat.message when enabled", async () => {
-      const plugin = aMockPlugin();
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      // Flag should be set — verified by system.transform injecting the nudge
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      ok(
-        output.system[0].includes("Identity Check"),
-        "system prompt should contain identity nudge after user message"
-      );
-    });
-
-    it("should clear the flag after system.transform processes it", async () => {
-      const plugin = aMockPlugin();
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      // First user message — flag set
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      // System transform — nudge injected and flag cleared
-      const output1 = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output1
-      );
-      ok(output1.system[0].includes("Identity Check"), "first transform should inject nudge");
-
-      // Second system transform — no new user message, flag should be gone
-      const output2 = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output2
-      );
-      strictEqual(
-        output2.system[0],
-        "You are a helpful assistant.",
-        "second transform should NOT inject nudge (flag cleared)"
-      );
-    });
-
-    it("should not queue identity nudge when afterEachUserMessage is false", async () => {
-      const plugin = aMockPlugin({
-        config: {
-          categories: {
-            identity: {
-              enabled: true,
-              afterEachUserMessage: false,
-            } as any,
-          },
-        } as any,
-      });
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      strictEqual(
-        output.system[0],
-        "You are a helpful assistant.",
-        "should NOT inject identity nudge when afterEachUserMessage is false"
-      );
-    });
-
-    it("should not queue identity nudge when identity category is disabled", async () => {
-      const plugin = aMockPlugin({
-        config: {
-          categories: {
-            identity: {
-              enabled: false,
-              afterEachUserMessage: true,
-            } as any,
-          },
-        } as any,
-      });
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      strictEqual(
-        output.system[0],
-        "You are a helpful assistant.",
-        "should NOT inject identity nudge when identity is disabled"
-      );
-    });
-
-    it("should clear the flag even when buildIdentityNudge returns null", async () => {
-      const plugin = aMockPlugin({
-        buildIdentityNudge: () => null,
-      });
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output1 = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output1
-      );
-      strictEqual(output1.system[0], "You are a helpful assistant.", "no nudge when buildIdentityNudge returns null");
-
-      // Second transform — flag should still be cleared
-      const output2 = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output2
-      );
-      strictEqual(output2.system[0], "You are a helpful assistant.", "flag should remain cleared");
-    });
-
-    it("should clear the flag even when system.length === 0", async () => {
-      const plugin = aMockPlugin();
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output1 = { system: [] as string[] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output1
-      );
-      deepStrictEqual(output1.system, [], "no system prompt to inject into");
-
-      // Second transform — flag should be cleared, no injection
-      const output2 = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output2
-      );
-      strictEqual(output2.system[0], "You are a helpful assistant.", "flag should be cleared even after empty system");
-    });
-
-    it("should handle identity nudge per-session independently", async () => {
-      const plugin = aMockPlugin();
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      // Session 1: user message
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "agent-a" } as any,
-        { message: "", parts: [] }
-      );
-
-      // Session 2: user message
-      await hooks["chat.message"]!(
-        { sessionID: "sess-2", agent: "agent-b" } as any,
-        { message: "", parts: [] }
-      );
-
-      // Transform session 1 only
-      const output1 = { system: ["Persona A"] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output1
-      );
-
-      ok(output1.system[0].includes("Identity Check"), "session 1 should get nudge");
-
-      // Session 2 should still have flag set
-      const output2 = { system: ["Persona B"] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-2", model: {} } as any,
-        output2
-      );
-
-      ok(output2.system[0].includes("Identity Check"), "session 2 should also get nudge");
-    });
-
-    it("should inject both user-message identity nudge and cadence nudge in same turn", async () => {
-      const plugin = aMockPlugin({
-        onToolBefore: () => "<system-reminder>Rule Compliance: remember the rules.</system-reminder>",
-      });
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      // Trigger a rules nudge via tool.execute.before (populates lastNudges)
-      await hooks["tool.execute.before"]!(
-        { sessionID: "sess-1", tool: "write", callID: "call-1" } as any,
-        { args: {} }
-      );
-
-      // Set pending user-message flag
-      await hooks["chat.message"]!(
-        { sessionID: "sess-1", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      // System transform should inject both nudges
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-1", model: {} } as any,
-        output
-      );
-
-      ok(
-        output.system[0].includes("Identity Check"),
-        "should contain identity nudge from user-message"
-      );
-      ok(
-        output.system[0].includes("Rule Compliance"),
-        "should contain rules nudge from cadence"
-      );
-    });
-  });
-
-  describe("nudge content in log messages (Task 8)", () => {
-    /**
-     * Helper: create a plugin with identity nudge support
-     * (mirrors aMockPlugin from pendingUserMessageIdentity scope)
-     */
-    function aMockPluginForLog(overrides: Partial<AgentPersonaCoachPlugin> = {}): AgentPersonaCoachPlugin {
-      const plugin = new AgentPersonaCoachPlugin();
-      return {
-        ...plugin,
-        config: {
-          ...plugin.config,
-          categories: {
-            ...plugin.config.categories,
-            identity: {
-              ...plugin.config.categories.identity,
-              enabled: true,
-              afterEachUserMessage: true,
-              ...overrides.config?.categories?.identity,
-            },
-          },
-        },
-        initializeSession: async () => {},
-        buildIdentityNudge: () => "<system-reminder>Identity Check: Who am I?</system-reminder>",
-        updateSystemPrompt: (system: string, nudges: string | string[]) =>
-          `${system}\n${Array.isArray(nudges) ? nudges.join("\n") : nudges}`,
-        ...overrides,
-      } as AgentPersonaCoachPlugin;
-    }
-
-    it("L123 — tool.execute.before log should include { nudge } as extra param", async () => {
-      const originalOnToolBefore = AgentPersonaCoachPlugin.prototype.onToolBefore;
-      AgentPersonaCoachPlugin.prototype.onToolBefore = function () {
-        return "<system-reminder>Rules nudge: remember the rules.</system-reminder>";
-      };
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
-
-      try {
-        const hooks = await server(aMockPluginInput() as any);
-
-        await hooks["chat.message"]!(
-          { sessionID: "sess-log", agent: "test-agent" } as any,
-          { message: "", parts: [] }
-        );
-
-        await hooks["tool.execute.before"]!(
-          { tool: "write", sessionID: "sess-log", callID: "call-1" } as any,
-          { args: {} }
-        );
-
-        ok(
-          capturedStderr.some(line => line.includes("nudge=") && line.includes("rules nudge injected")),
-          "tool.execute.before log should contain nudge= as extra param"
-        );
-      } finally {
-        AgentPersonaCoachPlugin.prototype.onToolBefore = originalOnToolBefore;
-      }
-    });
-
-    it("L144 — tool.execute.after log should include { nudges } as extra param", async () => {
-      const originalOnToolAfter = AgentPersonaCoachPlugin.prototype.onToolAfter;
-      AgentPersonaCoachPlugin.prototype.onToolAfter = function () {
-        return ["<system-reminder>Identity Check: stay focused!</system-reminder>"];
-      };
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
-
-      try {
-        const hooks = await server(aMockPluginInput() as any);
-
-        await hooks["chat.message"]!(
-          { sessionID: "sess-log-2", agent: "test-agent" } as any,
-          { message: "", parts: [] }
-        );
-
-        const output: any = { title: "", output: "", metadata: {}, inject: [] };
-        await hooks["tool.execute.after"]!(
-          { tool: "read", sessionID: "sess-log-2", callID: "call-2", args: {} } as any,
-          output
-        );
-
-        ok(
-          capturedStderr.some(line => line.includes("nudges=") && line.includes("nudge") && !line.includes("rules nudge injected")),
-          "tool.execute.after log should contain nudges= as extra param"
-        );
-      } finally {
-        AgentPersonaCoachPlugin.prototype.onToolAfter = originalOnToolAfter;
-      }
-    });
-
-    it("L194 — system.transform identity log should include { nudge } as extra param", async () => {
-      const plugin = aMockPluginForLog();
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-log-3", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const output = { system: ["You are a helpful assistant."] };
-      await hooks["experimental.chat.system.transform"]!(
-        { sessionID: "sess-log-3", model: {} } as any,
-        output
-      );
-
-      ok(
-        capturedStderr.some(line => line.includes("nudge=") && line.includes("identity") && line.includes("nudge injected")),
-        "system.transform identity log should contain nudge= as extra param"
-      );
-    });
-
-    it("L211 — system.transform update log should include { nudges } as extra param", async () => {
-      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {};
-      const originalOnToolBefore = AgentPersonaCoachPlugin.prototype.onToolBefore;
-      AgentPersonaCoachPlugin.prototype.onToolBefore = function () {
-        return "<system-reminder>Cadence nudge: keep going!</system-reminder>";
-      };
-
-      try {
-        const hooks = await server(aMockPluginInput() as any);
-
-        await hooks["chat.message"]!(
-          { sessionID: "sess-log-4", agent: "test-agent" } as any,
-          { message: "", parts: [] }
-        );
-
-        await hooks["tool.execute.before"]!(
-          { tool: "bash", sessionID: "sess-log-4", callID: "call-4" } as any,
-          { args: {} }
-        );
-
-        const output = { system: ["You are a helpful assistant."] };
-        await hooks["experimental.chat.system.transform"]!(
-          { sessionID: "sess-log-4", model: {} } as any,
-          output
-        );
-
-        ok(
-          capturedStderr.some(line => line.includes("nudges=") && line.includes("system prompt updated")),
-          "system.transform update log should contain nudges= as extra param"
-        );
-      } finally {
-        AgentPersonaCoachPlugin.prototype.onToolBefore = originalOnToolBefore;
-      }
-    });
-
-    it("L92 — chat.message queued log should NOT have extra params (no nudge/nudges)", async () => {
-      const plugin = aMockPluginForLog();
-      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
-
-      await hooks["chat.message"]!(
-        { sessionID: "sess-log-5", agent: "test-agent" } as any,
-        { message: "", parts: [] }
-      );
-
-      const queuedLines = capturedStderr.filter(line => line.includes("Identity nudge queued"));
-      ok(queuedLines.length > 0, "should have identity nudge queued log");
-
-      for (const line of queuedLines) {
-        ok(
-          !line.includes("nudge=") && !line.includes("nudges="),
-          `chat.message queued log should NOT have extra params (got: ${line})`
-        );
       }
     });
   });

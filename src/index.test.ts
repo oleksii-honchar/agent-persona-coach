@@ -210,34 +210,6 @@ describe("AgentPersonaCoachPlugin", () => {
     });
   });
 
-  describe("updateSystemPrompt", () => {
-    it("should inject nudge into system prompt when nudge is provided", () => {
-      const systemPrompt = "You are a helpful assistant.";
-      const nudge = "Identity Check reminder";
-      const result = plugin.updateSystemPrompt(systemPrompt, nudge);
-
-      ok(result.includes(systemPrompt));
-      ok(result.includes(nudge));
-    });
-
-    it("should inject multiple nudges into system prompt", () => {
-      const systemPrompt = "You are a helpful assistant.";
-      const nudges = ["Identity Check reminder", "Progress Check reminder"];
-      const result = plugin.updateSystemPrompt(systemPrompt, nudges);
-
-      ok(result.includes(systemPrompt));
-      ok(result.includes("Identity Check reminder"));
-      ok(result.includes("Progress Check reminder"));
-    });
-
-    it("should return original prompt when nudge is null", () => {
-      const systemPrompt = "You are a helpful assistant.";
-      const result = plugin.updateSystemPrompt(systemPrompt, null);
-
-      strictEqual(result, systemPrompt);
-    });
-  });
-
   describe("invalidateCache", () => {
     beforeEach(async () => {
       await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
@@ -271,66 +243,6 @@ describe("AgentPersonaCoachPlugin", () => {
 
       ok(result.length > 0, "Identity check should trigger again after clear");
       ok(result[0].includes("Identity Check"));
-    });
-  });
-
-  describe("buildIdentityNudge", () => {
-    it("should return a nudge containing 'Identity Check' when initialized with a persona", async () => {
-      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
-
-      const nudge = plugin.buildIdentityNudge(AGENT_NAME, AGENT_INFO_V1);
-
-      ok(nudge !== null, "Expected nudge to be non-null");
-      ok(nudge!.includes("Identity Check"), "Expected nudge to contain 'Identity Check'");
-      ok(nudge!.includes("Who am I in my role?"), "Expected nudge to contain the identity question");
-    });
-
-    it("should return a nudge even with empty agentInfo when persona was stored during initializeSession", async () => {
-      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
-
-      // Pass EMPTY agentInfo — persona text should come from stored map, not from agentInfo
-      const nudge = plugin.buildIdentityNudge(AGENT_NAME, {});
-
-      ok(nudge !== null, "Expected nudge to be non-null even with empty agentInfo");
-      ok(nudge!.includes("Identity Check"), "Expected nudge to contain 'Identity Check'");
-    });
-
-    it("should return null when not initialized (no cache)", () => {
-      // Do NOT call initializeSession — cache is empty
-      const nudge = plugin.buildIdentityNudge(AGENT_NAME, AGENT_INFO_V1);
-
-      strictEqual(nudge, null);
-    });
-
-    it("should fallback to extractPersona(agentInfo) when no stored persona exists", () => {
-      // This tests the ?? extractPersona(agentInfo) fallback in buildNudge:
-      //   1. this.agentPersonas.get("fallback-agent") → undefined (no stored persona)
-      //   2. Falls back to extractPersona(agentInfo) → "You are a helpful assistant..."
-      //   3. Cache has no questions (initializeSession was never called) → null
-      //
-      // What we verify: the extractPersona fallback succeeds without crashing,
-      // and the result is null only because of empty cache (not because of
-      // failed persona extraction). This ensures backward compatibility if
-      // agentInfo is ever populated in production hooks.
-      const nudge = plugin.buildIdentityNudge("fallback-agent", AGENT_INFO_V1);
-
-      strictEqual(nudge, null);
-    });
-
-    it("should return null when no identity questions exist", async () => {
-      const emptyIdentityMockClient = aMockChatClient(JSON.stringify({
-        identity: [],
-        rules: ["Am I following my constraints?"],
-        references: ["Did I read the reference files?"],
-        progress: ["Am I making progress?"],
-      }));
-      const emptyPlugin = new AgentPersonaCoachPlugin();
-      emptyPlugin.setChatClient(emptyIdentityMockClient);
-      await emptyPlugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
-
-      const nudge = emptyPlugin.buildIdentityNudge(AGENT_NAME, AGENT_INFO_V1);
-
-      strictEqual(nudge, null);
     });
   });
 

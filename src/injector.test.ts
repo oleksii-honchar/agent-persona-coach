@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
-import { ok, strictEqual } from "node:assert/strict";
-import { formatNudge, injectNudge } from "./injector.js";
+import { ok } from "node:assert/strict";
+import { formatNudge } from "./injector.js";
 
 describe("formatNudge", () => {
   it("should format identity nudge with correct category name", () => {
@@ -54,71 +54,3 @@ describe("formatNudge", () => {
   });
 });
 
-describe("injectNudge", () => {
-  it("should append nudge when no existing system-reminder block", () => {
-    const systemPrompt = "You are a helpful assistant.\nBe concise.";
-    const nudge = formatNudge("identity", ["Who am I?"]);
-    const result = injectNudge(systemPrompt, nudge);
-
-    ok(result.startsWith(systemPrompt));
-    ok(result.includes(nudge));
-    strictEqual(result.split("<system-reminder>").length, 2); // exactly one new block
-  });
-
-  it("should insert before existing system-reminder block", () => {
-    const existingNudge = formatNudge("rules", ["Am I following rules?"]);
-    const systemPrompt = `You are a helpful assistant.\n${existingNudge}\nMore instructions.`;
-    const newNudge = formatNudge("identity", ["Who am I?"]);
-
-    const result = injectNudge(systemPrompt, newNudge);
-
-    // The new nudge should appear before the closing </system-reminder> of the existing one
-    const newIndex = result.indexOf(newNudge);
-    const existingCloseIndex = result.lastIndexOf("</system-reminder>");
-
-    ok(newIndex < existingCloseIndex, "New nudge should be inserted before the existing closing tag");
-    ok(result.includes(existingNudge));
-    ok(result.includes(newNudge));
-  });
-
-  it("should insert before the LAST closing system-reminder tag when multiple exist", () => {
-    const firstNudge = formatNudge("rules", ["Follow rules?"]);
-    const secondNudge = formatNudge("identity", ["Who am I?"]);
-    const systemPrompt = `Start.\n<system-reminder>First block</system-reminder>\n${firstNudge}\nEnd.`;
-
-    const result = injectNudge(systemPrompt, secondNudge);
-
-    // The second nudge should be inserted before the LAST </system-reminder>
-    const allCloses = [...result.matchAll(/<\/system-reminder>/g)];
-    const lastCloseIndex = result.lastIndexOf("</system-reminder>");
-    const secondNudgeIndex = result.indexOf(secondNudge);
-
-    // Last closing tag should have at least 2 occurrences (original first block + the rules nudge close)
-    ok(allCloses.length >= 2);
-    ok(secondNudgeIndex < lastCloseIndex);
-  });
-
-  it("should preserve original system prompt content", () => {
-    const systemPrompt = "Original instructions here.";
-    const nudge = formatNudge("identity", ["Who am I?"]);
-    const result = injectNudge(systemPrompt, nudge);
-
-    ok(result.startsWith("Original instructions here."));
-  });
-
-  it("should handle empty system prompt", () => {
-    const systemPrompt = "";
-    const nudge = formatNudge("identity", ["Who am I?"]);
-    const result = injectNudge(systemPrompt, nudge);
-
-    ok(result.startsWith("\n"));
-    ok(result.includes(nudge));
-  });
-
-  it("should handle empty nudge", () => {
-    const systemPrompt = "Some instructions.";
-    const result = injectNudge(systemPrompt, "");
-
-    ok(result.includes("Some instructions."));
-  });
-});

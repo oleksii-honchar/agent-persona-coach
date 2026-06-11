@@ -4,7 +4,7 @@ import { DEFAULT_CONFIG, extractPersona } from "./types.js";
 import { CoachQuestionsCache } from "./cache.js";
 import { CoachGenerator, extractJsonFromMarkdown } from "./generator.js";
 import { CoachStateManager } from "./state.js";
-import { formatNudge, injectNudge } from "./injector.js";
+import { formatNudge } from "./injector.js";
 import { log } from "./logger.js";
 
 /**
@@ -145,26 +145,6 @@ export class AgentPersonaCoachPlugin {
     return null;
   }
 
-  /**
-   * Update system prompt with one or more nudges if needed.
-   */
-  updateSystemPrompt(systemPrompt: string, nudge: string | string[] | null): string {
-    if (!nudge) return systemPrompt;
-    const nudges = Array.isArray(nudge) ? nudge : [nudge];
-    return nudges.reduce((prompt, n) => injectNudge(prompt, n), systemPrompt);
-  }
-
-  /**
-   * Build an identity nudge for the given agent.
-   * Used by the server when injecting identity reminders after each user message.
-   */
-  buildIdentityNudge(
-    agentName: string,
-    agentInfo: Record<string, unknown>
-  ): string | null {
-    return this.buildNudge("identity", agentName, agentInfo);
-  }
-
   // ---- Private helpers ----
 
   private shouldInject(
@@ -215,7 +195,7 @@ export class AgentPersonaCoachPlugin {
 }
 
 export { CoachQuestionsCache, CoachGenerator, extractJsonFromMarkdown, CoachStateManager };
-export { formatNudge, injectNudge } from "./injector.js";
+export { formatNudge } from "./injector.js";
 export { extractPersona } from "./types.js";
 export type {
   CoachQuestions,

@@ -20,27 +20,4 @@ export function formatNudge(categoryId: string, questions: string[]): string {
 </system-reminder>`;
 }
 
-/**
- * Append a nudge to the system prompt.
- * If the system prompt already ends with a <system-reminder>, prepend before it.
- * Otherwise, append at the end.
- */
-export function injectNudge(systemPrompt: string, nudge: string): string {
-  const reminderTag = "</system-reminder>";
-  const lastReminderIndex = systemPrompt.lastIndexOf(reminderTag);
 
-  if (lastReminderIndex !== -1) {
-    // Insert before the last closing system-reminder tag
-    const afterTag = lastReminderIndex + reminderTag.length;
-    return (
-      systemPrompt.slice(0, afterTag) +
-      "\n" +
-      nudge +
-      "\n" +
-      systemPrompt.slice(afterTag)
-    );
-  }
-
-  // No existing system-reminder — append at the end
-  return systemPrompt + "\n" + nudge;
-}
