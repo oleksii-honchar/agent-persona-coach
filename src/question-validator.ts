@@ -1,12 +1,10 @@
-import { log } from "./logger.js";
-
 /**
- * Question validation and truncation.
+ * Question structure validation.
  *
- * Per spec §5: "Keep each question under 80 characters."
- * Questions exceeding 80 characters are truncated with a "…" suffix
- * and a warning is logged. Empty arrays are preserved (spec allows
- * skipping categories that don't apply).
+ * The validator NEVER modifies question content — questions pass through
+ * unchanged regardless of length. It only ensures structural correctness:
+ * each category must be a non-null array of strings. Invalid categories
+ * (null, undefined, non-array) are replaced with empty arrays.
  */
 
 export interface QuestionCategories {
@@ -16,16 +14,11 @@ export interface QuestionCategories {
   progress: string[];
 }
 
-const MAX_LENGTH = 80;
-const ELLIPSIS = "\u2026"; // …
-
 /**
- * Validate and truncate questions to ensure none exceed MAX_LENGTH characters.
+ * Validate question structure: ensure each category is a non-null array of strings.
  *
- * - Questions with length ≤ 80 pass through unchanged.
- * - Questions with length > 80 are truncated to 79 characters + "…" (80 total).
- * - A warning is logged for each truncated question.
- * - Empty arrays are preserved as-is.
+ * - Questions pass through unchanged regardless of length.
+ * - Null/undefined/non-array categories are replaced with empty arrays.
  * - Returns a new object; input is not mutated.
  */
 export function validateQuestions(
@@ -45,22 +38,12 @@ export function validateQuestions(
     "progress",
   ];
 
-  let truncatedCount = 0;
-
   for (const category of categoryNames) {
     const questions = categories[category];
-    for (const q of questions) {
-      if (q.length > MAX_LENGTH) {
-        result[category].push(q.slice(0, MAX_LENGTH - 1) + ELLIPSIS);
-        truncatedCount++;
-      } else {
-        result[category].push(q);
-      }
+    if (Array.isArray(questions)) {
+      result[category] = [...questions];
     }
-  }
-
-  if (truncatedCount > 0) {
-    log.warn(`Truncated ${truncatedCount} question(s) exceeding ${MAX_LENGTH} characters.`);
+    // else: null, undefined, or non-array → empty array (already set)
   }
 
   return result;

@@ -1,85 +1,12 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import { strictEqual, deepStrictEqual, ok } from "node:assert/strict";
 import { validateQuestions } from "./question-validator.js";
 
-interface LoggerCall {
-  message: string;
-}
-
-/**
- * Capture stderr writes (which is where log.warn writes to).
- * The logger writes structured lines like "WARN  2026-... Truncated N question(s)..."
- */
-function captureStderr(): { calls: LoggerCall[]; restore: () => void } {
-  const calls: LoggerCall[] = [];
-  const originalWrite = process.stderr.write.bind(process.stderr);
-  process.stderr.write = (chunk: string | Buffer) => {
-    const text = typeof chunk === "string" ? chunk : chunk.toString();
-    for (const line of text.split("\n").filter(Boolean)) {
-      calls.push({ message: line });
-    }
-    return originalWrite(chunk);
-  };
-  return {
-    calls,
-    restore: () => {
-      process.stderr.write = originalWrite;
-    },
-  };
-}
-
-const EXACTLY_80_CHARS = "12345678901234567890123456789012345678901234567890123456789012345678901234567890";
-const EIGHTY_ONE_CHARS = EXACTLY_80_CHARS + "1";
-const TRUNCATED_80 = EXACTLY_80_CHARS.slice(0, 79) + "\u2026"; // 79 chars + "…" = 80 chars
-const SHORT_QUESTION = "Who am I?";
-const MULTIBYTE_80 = "ｘ".repeat(80); // fullwidth x (U+FF58) — 80 chars
-const MULTIBYTE_81 = MULTIBYTE_80 + "ｘ"; // 81 chars
-
 describe("validateQuestions", () => {
-  let logger: ReturnType<typeof captureStderr>;
-
-  beforeEach(() => {
-    logger = captureStderr();
-  });
-
-  afterEach(() => {
-    logger.restore();
-  });
-
-  describe("truncation", () => {
-    it("should truncate questions exceeding 80 characters with '…' suffix", () => {
+  describe("passthrough — questions never truncated", () => {
+    it("should pass through short questions unchanged", () => {
       const input = {
-        identity: [EIGHTY_ONE_CHARS],
-        rules: [],
-        references: [],
-        progress: [],
-      };
-
-      const result = validateQuestions(input);
-
-      strictEqual(result.identity.length, 1);
-      strictEqual(result.identity[0].length, 80);
-      strictEqual(result.identity[0], TRUNCATED_80);
-      ok(result.identity[0].endsWith("\u2026"));
-    });
-
-    it("should pass through questions of exactly 80 characters unchanged", () => {
-      const input = {
-        identity: [EXACTLY_80_CHARS],
-        rules: [],
-        references: [],
-        progress: [],
-      };
-
-      const result = validateQuestions(input);
-
-      strictEqual(result.identity.length, 1);
-      strictEqual(result.identity[0], EXACTLY_80_CHARS);
-    });
-
-    it("should pass through questions under 80 characters unchanged", () => {
-      const input = {
-        identity: [SHORT_QUESTION],
+        identity: ["Who am I?"],
         rules: ["Am I following the rules?"],
         references: ["Did I check the docs?"],
         progress: ["Am I on track?"],
@@ -90,27 +17,11 @@ describe("validateQuestions", () => {
       deepStrictEqual(result, input);
     });
 
-    it("should truncate only the questions that exceed 80 chars in a mixed array", () => {
+    it("should pass through questions of exactly 80 characters unchanged", () => {
+      const exactly80 = "12345678901234567890123456789012345678901234567890123456789012345678901234567890";
+
       const input = {
-        identity: [SHORT_QUESTION, EIGHTY_ONE_CHARS, "Also short?"],
-        rules: [SHORT_QUESTION],
-        references: [EIGHTY_ONE_CHARS],
-        progress: [],
-      };
-
-      const result = validateQuestions(input);
-
-      strictEqual(result.identity.length, 3);
-      strictEqual(result.identity[0], SHORT_QUESTION);
-      strictEqual(result.identity[1], TRUNCATED_80);
-      strictEqual(result.identity[2], "Also short?");
-      strictEqual(result.rules[0], SHORT_QUESTION);
-      strictEqual(result.references[0], TRUNCATED_80);
-    });
-
-    it("should handle exactly 80-char boundary precisely (80 passes, 81 truncates)", () => {
-      const input = {
-        identity: [EXACTLY_80_CHARS, EIGHTY_ONE_CHARS],
+        identity: [exactly80],
         rules: [],
         references: [],
         progress: [],
@@ -118,17 +29,16 @@ describe("validateQuestions", () => {
 
       const result = validateQuestions(input);
 
-      strictEqual(result.identity[0], EXACTLY_80_CHARS);
+      strictEqual(result.identity[0], exactly80);
       strictEqual(result.identity[0].length, 80);
-      strictEqual(result.identity[1], TRUNCATED_80);
-      strictEqual(result.identity[1].length, 80);
     });
-  });
 
-  describe("empty arrays", () => {
-    it("should preserve completely empty categories", () => {
+    it("should pass through questions longer than 80 characters unchanged", () => {
+      const longQuestion =
+        "This is a very long question that definitely exceeds eighty characters and should NOT be truncated by the validator under any circumstances whatsoever.";
+
       const input = {
-        identity: [],
+        identity: [longQuestion],
         rules: [],
         references: [],
         progress: [],
@@ -136,26 +46,79 @@ describe("validateQuestions", () => {
 
       const result = validateQuestions(input);
 
-      deepStrictEqual(result, input);
+      strictEqual(result.identity[0], longQuestion);
+      strictEqual(result.identity[0].length, longQuestion.length);
+      ok(longQuestion.length > 80);
     });
 
-    it("should preserve some empty and some populated categories", () => {
+    it("should pass through extremely long questions (500+ chars) unchanged", () => {
+      const veryLongQuestion = "x".repeat(500);
+
       const input = {
-        identity: [SHORT_QUESTION],
+        identity: [veryLongQuestion],
         rules: [],
         references: [],
-        progress: [SHORT_QUESTION],
+        progress: [],
       };
 
       const result = validateQuestions(input);
 
-      strictEqual(result.identity.length, 1);
-      strictEqual(result.rules.length, 0);
-      strictEqual(result.references.length, 0);
-      strictEqual(result.progress.length, 1);
+      strictEqual(result.identity[0], veryLongQuestion);
+      strictEqual(result.identity[0].length, 500);
     });
 
-    it("should preserve empty strings in arrays (treat as valid under-80)", () => {
+    it("should pass through mixed long/short questions unchanged", () => {
+      const longQuestion = "x".repeat(200);
+
+      const input = {
+        identity: ["Short?", longQuestion, "Also short?"],
+        rules: ["Another short question"],
+        references: [longQuestion],
+        progress: [],
+      };
+
+      const result = validateQuestions(input);
+
+      strictEqual(result.identity[0], "Short?");
+      strictEqual(result.identity[1], longQuestion);
+      strictEqual(result.identity[2], "Also short?");
+      strictEqual(result.rules[0], "Another short question");
+      strictEqual(result.references[0], longQuestion);
+    });
+
+    it("should pass through multi-byte (fullwidth) questions unchanged regardless of length", () => {
+      const multibyte81 = "ｘ".repeat(81); // 81 fullwidth characters
+
+      const input = {
+        identity: [multibyte81],
+        rules: [],
+        references: [],
+        progress: [],
+      };
+
+      const result = validateQuestions(input);
+
+      strictEqual(result.identity[0], multibyte81);
+      strictEqual(result.identity[0].length, 81);
+    });
+
+    it("should pass through emoji questions unchanged regardless of length", () => {
+      const emoji81 = "👋".repeat(41) + "a"; // 82 JS characters
+
+      const input = {
+        identity: [emoji81],
+        rules: [],
+        references: [],
+        progress: [],
+      };
+
+      const result = validateQuestions(input);
+
+      strictEqual(result.identity[0], emoji81);
+      strictEqual(result.identity[0].length, emoji81.length);
+    });
+
+    it("should pass through empty strings in arrays unchanged", () => {
       const input = {
         identity: [""],
         rules: [],
@@ -170,55 +133,24 @@ describe("validateQuestions", () => {
     });
   });
 
-  describe("warning logging", () => {
-    it("should log a warning when a question is truncated", () => {
-      validateQuestions({
-        identity: [EIGHTY_ONE_CHARS],
-        rules: [],
-        references: [],
-        progress: [],
-      });
-
-      ok(logger.calls.length >= 1);
-      ok(logger.calls.some((c) => /WARN/.test(c.message)));
-      ok(logger.calls.some((c) => /truncated/i.test(c.message)));
-    });
-
-    it("should log a single warning with the count of truncated questions", () => {
-      validateQuestions({
-        identity: [EIGHTY_ONE_CHARS, EIGHTY_ONE_CHARS],
-        rules: [EIGHTY_ONE_CHARS],
-        references: [],
-        progress: [EIGHTY_ONE_CHARS],
-      });
-
-      const truncationWarnings = logger.calls.filter(
-        (c) => /truncated/i.test(c.message)
-      );
-      strictEqual(truncationWarnings.length, 1);
-      ok(truncationWarnings[0].message.includes("4"));
-    });
-
-    it("should NOT log a warning when no truncation occurs", () => {
-      validateQuestions({
-        identity: [SHORT_QUESTION],
-        rules: [],
-        references: [],
-        progress: [],
-      });
-
-      const truncationWarnings = logger.calls.filter(
-        (c) => /truncated/i.test(c.message)
-      );
-      strictEqual(truncationWarnings.length, 0);
-    });
-  });
-
-  describe("multi-byte characters", () => {
-    it("should handle full-width characters (count by character, not byte)", () => {
-      // 80 fullwidth characters — should pass through
+  describe("structure validation — null/non-array categories replaced with empty arrays", () => {
+    it("should replace null category with empty array", () => {
       const input = {
-        identity: [MULTIBYTE_80],
+        identity: null as unknown as string[],
+        rules: ["Valid question"],
+        references: [],
+        progress: [],
+      };
+
+      const result = validateQuestions(input);
+
+      deepStrictEqual(result.identity, []);
+      strictEqual(result.rules[0], "Valid question");
+    });
+
+    it("should replace undefined category with empty array", () => {
+      const input = {
+        identity: undefined as unknown as string[],
         rules: [],
         references: [],
         progress: [],
@@ -226,14 +158,12 @@ describe("validateQuestions", () => {
 
       const result = validateQuestions(input);
 
-      strictEqual(result.identity[0], MULTIBYTE_80);
-      strictEqual(result.identity[0].length, 80);
+      deepStrictEqual(result.identity, []);
     });
 
-    it("should truncate full-width characters at the 80-char boundary", () => {
-      // 81 fullwidth characters — should truncate
+    it("should replace non-array category (string) with empty array", () => {
       const input = {
-        identity: [MULTIBYTE_81],
+        identity: "not an array" as unknown as string[],
         rules: [],
         references: [],
         progress: [],
@@ -241,35 +171,76 @@ describe("validateQuestions", () => {
 
       const result = validateQuestions(input);
 
-      strictEqual(result.identity[0].length, 80);
-      ok(result.identity[0].endsWith("\u2026"));
+      deepStrictEqual(result.identity, []);
     });
 
-    it("should handle emoji (multi-codepoint) at boundary correctly", () => {
-      // Emoji like 👋 take 2 JS chars (surrogate pair), but length still counts correctly
-      const base = "👋".repeat(40); // 80 JS characters
-      const over = base + "a"; // 81 JS characters
+    it("should replace non-array category (number) with empty array", () => {
+      const input = {
+        identity: 42 as unknown as string[],
+        rules: [],
+        references: [],
+        progress: [],
+      };
 
-      const result = validateQuestions({
-        identity: [base, over],
+      const result = validateQuestions(input);
+
+      deepStrictEqual(result.identity, []);
+    });
+
+    it("should replace all null categories with empty arrays", () => {
+      const input = {
+        identity: null as unknown as string[],
+        rules: null as unknown as string[],
+        references: null as unknown as string[],
+        progress: null as unknown as string[],
+      };
+
+      const result = validateQuestions(input);
+
+      deepStrictEqual(result, {
+        identity: [],
         rules: [],
         references: [],
         progress: [],
       });
+    });
 
-      strictEqual(result.identity[0], base);
-      strictEqual(result.identity[0].length, 80);
-      strictEqual(result.identity[1].length, 80);
-      ok(result.identity[1].endsWith("\u2026"));
+    it("should preserve valid empty arrays", () => {
+      const input = {
+        identity: [],
+        rules: [],
+        references: [],
+        progress: [],
+      };
+
+      const result = validateQuestions(input);
+
+      deepStrictEqual(result, input);
+    });
+
+    it("should handle mix of valid and invalid categories", () => {
+      const input = {
+        identity: ["Valid question"],
+        rules: null as unknown as string[],
+        references: ["Another valid"],
+        progress: undefined as unknown as string[],
+      };
+
+      const result = validateQuestions(input);
+
+      strictEqual(result.identity[0], "Valid question");
+      deepStrictEqual(result.rules, []);
+      strictEqual(result.references[0], "Another valid");
+      deepStrictEqual(result.progress, []);
     });
   });
 
   describe("immutability", () => {
     it("should not mutate the input object", () => {
       const input = {
-        identity: [EIGHTY_ONE_CHARS],
+        identity: ["x".repeat(200)],
         rules: [],
-        references: [SHORT_QUESTION],
+        references: ["Short?"],
         progress: [],
       };
 
@@ -282,13 +253,12 @@ describe("validateQuestions", () => {
 
       validateQuestions(input);
 
-      // Input should be unchanged
       deepStrictEqual(input, inputCopy);
     });
 
     it("should return a new object (not the same reference)", () => {
       const input = {
-        identity: [SHORT_QUESTION],
+        identity: ["Who am I?"],
         rules: [],
         references: [],
         progress: [],
@@ -297,6 +267,51 @@ describe("validateQuestions", () => {
       const result = validateQuestions(input);
 
       ok(result !== input);
+    });
+
+    it("should return new array references for each category", () => {
+      const input = {
+        identity: ["Who am I?"],
+        rules: ["Am I following rules?"],
+        references: [],
+        progress: [],
+      };
+
+      const result = validateQuestions(input);
+
+      ok(result.identity !== input.identity);
+      ok(result.rules !== input.rules);
+      ok(result.references !== input.references);
+      ok(result.progress !== input.progress);
+    });
+  });
+
+  describe("no logging side effects", () => {
+    it("should not produce any warning logs for long questions", () => {
+      // Capture stderr to verify no WARN output
+      const captured: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk: string | Buffer) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString();
+        for (const line of text.split("\n").filter(Boolean)) {
+          captured.push(line);
+        }
+        return originalWrite(chunk);
+      };
+
+      try {
+        validateQuestions({
+          identity: ["x".repeat(200)],
+          rules: ["x".repeat(300)],
+          references: [],
+          progress: [],
+        });
+
+        const warnings = captured.filter((c) => /WARN/.test(c));
+        strictEqual(warnings.length, 0);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
     });
   });
 });

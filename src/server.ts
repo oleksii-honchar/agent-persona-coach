@@ -89,7 +89,7 @@ export async function createServerHooks(
       if (plugin.config?.categories?.identity?.enabled &&
           plugin.config?.categories?.identity?.afterEachUserMessage) {
         pendingUserMessageIdentity.set(sessionID, true);
-        log.debug(`Identity nudge queued for session ${sessionID}`);
+        log.info(`Identity nudge queued for session ${sessionID}`);
       }
 
       // NOTE: initialization moved to experimental.chat.system.transform
@@ -120,7 +120,7 @@ export async function createServerHooks(
 
       if (nudge) {
         lastNudges.set(sessionID, [nudge]);
-        log.debug(`${tool} → rules nudge injected (session ${sessionID})`);
+        log.info(`${tool} → rules nudge injected (session ${sessionID})`);
       }
     },
 
@@ -141,7 +141,7 @@ export async function createServerHooks(
         const categories = nudges
           .map(n => n.includes("Identity") ? "identity" : n.includes("Progress") ? "progress" : n.includes("Reference") ? "references" : "?")
           .join(", ");
-        log.debug(`${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`);
+        log.info(`${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`);
 
         // Inject each nudge as a separate synthetic system message
         output.inject = nudges.map(text => ({ role: "system" as const, text }));
@@ -191,7 +191,7 @@ export async function createServerHooks(
               system[system.length - 1],
               nudge
             ) ?? system[system.length - 1];
-            log.debug(`identity (user-message) nudge injected (session ${sessionID})`);
+            log.info(`identity (user-message) nudge injected (session ${sessionID})`);
           }
         }
       }
@@ -208,7 +208,7 @@ export async function createServerHooks(
         system[system.length - 1],
         nudges
       ) ?? system[system.length - 1];
-      log.debug(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`);
+      log.info(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`);
     },
   };
 }

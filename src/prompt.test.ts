@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { ok, strictEqual } from "node:assert/strict";
-import { buildCoachPrompt } from "./prompt.js";
+import { COACH_PROMPT, buildCoachPrompt } from "./prompt.js";
 
 describe("buildCoachPrompt", () => {
   it("should contain the persona text in the output", () => {
@@ -66,5 +66,21 @@ describe("buildCoachPrompt", () => {
     const personaText = "Line 1: Be helpful.\nLine 2: Stay concise.\nLine 3: Never guess.";
     const result = buildCoachPrompt(personaText);
     ok(result.includes(personaText));
+  });
+});
+
+describe("COACH_PROMPT", () => {
+  it("should contain the concise-and-focused instruction", () => {
+    ok(
+      COACH_PROMPT.includes("Keep questions concise and focused"),
+      "COACH_PROMPT must contain the concise-and-focused instruction",
+    );
+  });
+
+  it("should NOT contain the 80-character limit instruction", () => {
+    ok(
+      !COACH_PROMPT.includes("Keep each question under 80 characters"),
+      "COACH_PROMPT must NOT contain the old 80-character instruction",
+    );
   });
 });

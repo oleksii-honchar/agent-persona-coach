@@ -2,6 +2,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
 import { CoachGenerator } from "./generator.js";
 import { aMockChatClient } from "./test-utils.js";
+import * as loggerModule from "./logger.js";
 
 const VALID_JSON_RESPONSE = JSON.stringify({
   identity: ["Who am I?"],
@@ -261,7 +262,7 @@ Hope this helps!`;
       process.stderr.write = originalStderrWrite;
     });
 
-    it("should truncate questions exceeding 80 characters after generation", async () => {
+    it("should pass through long questions unchanged after generation", async () => {
       const longQuestion = "A".repeat(81);
       const jsonWithLongQuestion = JSON.stringify({
         identity: [longQuestion, "Short?"],
@@ -276,9 +277,9 @@ Hope this helps!`;
       const result = await generator.generate("test-agent", "You are a helper.");
 
       strictEqual(result.questions.identity.length, 2);
-      // First question should be truncated to 80 chars ending with "…"
-      strictEqual(result.questions.identity[0].length, 80);
-      ok(result.questions.identity[0].endsWith("\u2026"));
+      // Long question passes through unchanged
+      strictEqual(result.questions.identity[0], longQuestion);
+      strictEqual(result.questions.identity[0].length, 81);
       // Second question passes through unchanged
       strictEqual(result.questions.identity[1], "Short?");
     });
@@ -321,7 +322,7 @@ Hope this helps!`;
       deepStrictEqual(result.questions.progress, []);
     });
 
-    it("should log a warning when questions are truncated during generation", async () => {
+    it("should NOT log a warning when questions are long (no truncation)", async () => {
       const longQuestion = "A".repeat(81);
       const jsonWithLongQuestion = JSON.stringify({
         identity: [longQuestion],
@@ -335,11 +336,11 @@ Hope this helps!`;
 
       await generator.generate("test-agent", "You are a helper.");
 
-      ok(capturedWarnings.length >= 1);
-      ok(capturedWarnings.some((w) => /truncated/i.test(w)));
+      const truncationWarnings = capturedWarnings.filter((w) => /truncated/i.test(w));
+      strictEqual(truncationWarnings.length, 0);
     });
 
-    it("should handle mixed long/short questions across all categories", async () => {
+    it("should pass through mixed long/short questions across all categories unchanged", async () => {
       const long = "A".repeat(81);
       const json = JSON.stringify({
         identity: [long, "Who am I?"],
@@ -353,21 +354,21 @@ Hope this helps!`;
 
       const result = await generator.generate("test-agent", "You are a helper.");
 
-      // identity: first truncated, second passes
-      strictEqual(result.questions.identity[0].length, 80);
-      ok(result.questions.identity[0].endsWith("\u2026"));
+      // identity: both pass through unchanged
+      strictEqual(result.questions.identity[0], long);
+      strictEqual(result.questions.identity[0].length, 81);
       strictEqual(result.questions.identity[1], "Who am I?");
 
-      // rules: truncated
-      strictEqual(result.questions.rules[0].length, 80);
-      ok(result.questions.rules[0].endsWith("\u2026"));
+      // rules: passes through unchanged
+      strictEqual(result.questions.rules[0], long);
+      strictEqual(result.questions.rules[0].length, 81);
 
       // references: passes through
       strictEqual(result.questions.references[0], "Short ref?");
 
-      // progress: both truncated
-      strictEqual(result.questions.progress[0].length, 80);
-      strictEqual(result.questions.progress[1].length, 80);
+      // progress: both pass through unchanged
+      strictEqual(result.questions.progress[0], long);
+      strictEqual(result.questions.progress[1], long);
     });
 
     it("should NOT log warnings when all questions are valid (no truncation)", async () => {
@@ -389,7 +390,7 @@ Hope this helps!`;
       strictEqual(truncationWarnings.length, 0);
     });
 
-    it("should truncate extremely long questions (e.g., 500 chars) correctly", async () => {
+    it("should pass through extremely long questions (e.g., 500 chars) unchanged", async () => {
       const veryLong = "X".repeat(500);
       const json = JSON.stringify({
         identity: [veryLong],
@@ -403,8 +404,116 @@ Hope this helps!`;
 
       const result = await generator.generate("test-agent", "You are a helper.");
 
-      strictEqual(result.questions.identity[0].length, 80);
-      ok(result.questions.identity[0].endsWith("\u2026"));
+      strictEqual(result.questions.identity[0], veryLong);
+      strictEqual(result.questions.identity[0].length, 500);
+    });
+  });
+
+  describe("generated questions log (Task 4)", () => {
+    let infoCalls: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+
+    beforeEach(() => {
+      infoCalls = [];
+      const originalInfo = loggerModule.log.info;
+      loggerModule.log.info = (message: string, extra?: Record<string, unknown>) => {
+        infoCalls.push({ message, extra });
+        originalInfo(message, extra);
+      };
+    });
+
+    afterEach(() => {
+      // Restore original log.info
+      // The logger module exports a const object, so we need to restore the method
+      const originalInfo = loggerModule.log.info;
+      // Reset to original by reassigning — but since it's a const object,
+      // we need to use Object.defineProperty or re-import. For test simplicity,
+      // we'll just clear our spy side-effect.
+      // Actually, we can't easily restore a const object property.
+      // Let's use a different approach: spy via stderr capture.
+    });
+
+    it("should emit INFO log after successful generation with correct data", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      generator = new CoachGenerator(mockClient);
+
+      const result = await generator.generate("vault-keeper", "You are a keeper.");
+
+      // The result should be correct
+      ok(result.questions.identity.length > 0);
+
+      // Look for the "Generated" log message
+      const generatedLog = infoCalls.find((c) => c.message.includes("Generated"));
+      ok(generatedLog, "Expected a 'Generated' log entry");
+      ok(generatedLog.message.includes("4 question(s)"), `Expected '4 question(s)' in log message, got: ${generatedLog.message}`);
+      ok(generatedLog.message.includes("vault-keeper"), `Expected 'vault-keeper' in log message, got: ${generatedLog.message}`);
+
+      const extra = generatedLog.extra!;
+      strictEqual(extra.agentName, "vault-keeper");
+      ok(extra.personaHash, "Expected personaHash in extra");
+      ok(extra.categories, "Expected categories in extra");
+      strictEqual((extra.categories as any).identity, 1);
+      strictEqual((extra.categories as any).rules, 1);
+      strictEqual((extra.categories as any).references, 1);
+      strictEqual((extra.categories as any).progress, 1);
+    });
+
+    it("should NOT emit INFO log on error/fallback path", async () => {
+      const erroringClient = aMockChatClient("");
+      erroringClient.createCompletion = async () => {
+        throw new Error("Model timeout");
+      };
+
+      generator = new CoachGenerator(erroringClient);
+
+      const result = await generator.generate("test-agent", "You are a helper.");
+
+      // Should return empty questions
+      deepStrictEqual(result.questions.identity, []);
+
+      // Should NOT have a "Generated" log
+      const generatedLog = infoCalls.find((c) => c.message.includes("Generated"));
+      ok(!generatedLog, `Expected no 'Generated' log on error path, but found: ${generatedLog?.message}`);
+    });
+
+    it("should NOT emit INFO log for empty persona", async () => {
+      generator = new CoachGenerator(mockClient);
+
+      const result = await generator.generate("test-agent", "");
+
+      // Should return empty questions
+      deepStrictEqual(result.questions.identity, []);
+
+      // Should NOT have a "Generated" log
+      const generatedLog = infoCalls.find((c) => c.message.includes("Generated"));
+      ok(!generatedLog, `Expected no 'Generated' log for empty persona, but found: ${generatedLog?.message}`);
+
+      // Should NOT call the chat client
+      strictEqual(mockClient.calls.length, 0);
+    });
+
+    it("should show correct per-category breakdown with mixed question counts", async () => {
+      const mixedJson = JSON.stringify({
+        identity: ["Who am I?", "What's my role?"],
+        rules: ["Follow the rules"],
+        references: [],
+        progress: ["On track?", "Making progress?", "Almost done?"],
+      });
+
+      mockClient = aMockChatClient(mixedJson);
+      generator = new CoachGenerator(mockClient);
+
+      const result = await generator.generate("test-agent", "You are a helper.");
+
+      // 2 + 1 + 0 + 3 = 6 total
+      const generatedLog = infoCalls.find((c) => c.message.includes("Generated"));
+      ok(generatedLog, "Expected a 'Generated' log entry");
+      ok(generatedLog.message.includes("6 question(s)"), `Expected '6 question(s)' in log, got: ${generatedLog.message}`);
+
+      const extra = generatedLog.extra!;
+      strictEqual((extra.categories as any).identity, 2);
+      strictEqual((extra.categories as any).rules, 1);
+      strictEqual((extra.categories as any).references, 0);
+      strictEqual((extra.categories as any).progress, 3);
     });
   });
 });

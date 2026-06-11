@@ -13,7 +13,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { strictEqual, ok } from "node:assert/strict";
 import { join } from "node:path";
-import { logDir, logFile } from "./logger.js";
+import { logDir, logFile, resolveInitialLevel } from "./logger.js";
 
 describe("logDir", () => {
   const originalOpenCodeLogDir = process.env.OPENCODE_LOG_DIR;
@@ -113,3 +113,58 @@ describe("logFile", () => {
 // when running the dev server. The format function automatically prepends
 // `service=persona-coach` to every log line (see format() in logger.ts).
 // Existing 215 tests verify all other logger behavior.
+
+describe("resolveInitialLevel", () => {
+  const originalEnv = process.env.OPENCODE_LOG_LEVEL;
+
+  beforeEach(() => {
+    delete process.env.OPENCODE_LOG_LEVEL;
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.OPENCODE_LOG_LEVEL;
+    } else {
+      process.env.OPENCODE_LOG_LEVEL = originalEnv;
+    }
+  });
+
+  it("should return INFO when no env var is set", () => {
+    strictEqual(resolveInitialLevel(), "INFO");
+  });
+
+  it("should return DEBUG when OPENCODE_LOG_LEVEL=debug", () => {
+    process.env.OPENCODE_LOG_LEVEL = "debug";
+    strictEqual(resolveInitialLevel(), "DEBUG");
+  });
+
+  it("should return WARN when OPENCODE_LOG_LEVEL=warn", () => {
+    process.env.OPENCODE_LOG_LEVEL = "warn";
+    strictEqual(resolveInitialLevel(), "WARN");
+  });
+
+  it("should return ERROR when OPENCODE_LOG_LEVEL=error", () => {
+    process.env.OPENCODE_LOG_LEVEL = "error";
+    strictEqual(resolveInitialLevel(), "ERROR");
+  });
+
+  it("should return INFO when OPENCODE_LOG_LEVEL=info", () => {
+    process.env.OPENCODE_LOG_LEVEL = "info";
+    strictEqual(resolveInitialLevel(), "INFO");
+  });
+
+  it("should fallback to INFO when OPENCODE_LOG_LEVEL=invalid", () => {
+    process.env.OPENCODE_LOG_LEVEL = "invalid";
+    strictEqual(resolveInitialLevel(), "INFO");
+  });
+
+  it("should normalize casing — Debug → DEBUG", () => {
+    process.env.OPENCODE_LOG_LEVEL = "Debug";
+    strictEqual(resolveInitialLevel(), "DEBUG");
+  });
+
+  it("should normalize casing — WARN → WARN (already uppercase)", () => {
+    process.env.OPENCODE_LOG_LEVEL = "WARN";
+    strictEqual(resolveInitialLevel(), "WARN");
+  });
+});

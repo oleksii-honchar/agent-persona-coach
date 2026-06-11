@@ -72,6 +72,18 @@ export class CoachGenerator {
 
       const validated = validateQuestions(rawQuestions);
 
+      const totalQuestions = Object.values(validated).flat().length;
+      log.info(`Generated ${totalQuestions} question(s) for agent ${agentName}`, {
+        agentName,
+        personaHash,
+        categories: {
+          identity: validated.identity.length,
+          rules: validated.rules.length,
+          references: validated.references.length,
+          progress: validated.progress.length,
+        },
+      });
+
       return {
         agentName,
         personaHash,

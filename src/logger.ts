@@ -28,7 +28,21 @@ const levelPriority: Record<Level, number> = {
   ERROR: 3,
 };
 
-let currentLevel: Level = "INFO";
+/**
+ * Resolve the initial log level from the environment.
+ *
+ * OPENCODE_LOG_LEVEL — align with opencode's --log-level setting.
+ * Falls back to INFO (matching production default).
+ */
+export function resolveInitialLevel(): Level {
+  const envLevel = process.env.OPENCODE_LOG_LEVEL?.toUpperCase();
+  if (envLevel && envLevel in levelPriority) {
+    return envLevel as Level;
+  }
+  return "INFO";
+}
+
+let currentLevel: Level = resolveInitialLevel();
 
 export function setLevel(level: Level): void {
   currentLevel = level;

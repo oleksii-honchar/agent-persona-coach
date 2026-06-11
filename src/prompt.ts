@@ -33,7 +33,7 @@ Category 4: PROGRESS CHECK
 Rules for questions:
 - Make them PERSONA-SPECIFIC, not generic
 - Reference actual constraints, rules, files from the persona
-- Keep each question under 80 characters
+- Keep questions concise and focused — aim for a single clear thought per question
 - Use second person ("you") — these are addressed to the agent
 - If a category doesn't apply (e.g., persona has no rules), skip it with empty array
 
