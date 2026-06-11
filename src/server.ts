@@ -144,7 +144,7 @@ export async function createServerHooks(
         log.info(`${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`, { nudges });
 
         // Inject each nudge as a separate synthetic system message
-        output.inject = nudges.map(text => ({ role: "system" as const, text }));
+        output.inject = nudges.map(text => ({ role: "user" as const, text }));
       }
     },
 
@@ -185,18 +185,29 @@ export async function createServerHooks(
         pendingUserMessageIdentity.delete(sessionID);
         const nudge = plugin.buildIdentityNudge?.(agentName, {});
         if (nudge) {
-          output.system.push(nudge);
-          log.info(`identity (user-message) nudge injected (session ${sessionID})`, { nudge });
+          const system = output.system;
+          if (system.length > 0) {
+            system[system.length - 1] = plugin.updateSystemPrompt?.(
+              system[system.length - 1],
+              nudge
+            ) ?? system[system.length - 1];
+            log.info(`identity (user-message) nudge injected (session ${sessionID})`, { nudge });
+          }
         }
       }
 
       // --- Nudge injection ---
+      const system = output.system;
+      if (system.length === 0) return;
+
       const nudges = lastNudges.get(sessionID);
       if (!nudges || nudges.length === 0) return;
 
-      for (const n of nudges) {
-        output.system.push(n);
-      }
+      // Inject all nudges into the last system prompt element
+      system[system.length - 1] = plugin.updateSystemPrompt?.(
+        system[system.length - 1],
+        nudges
+      ) ?? system[system.length - 1];
       log.info(`system prompt updated with ${nudges.length} nudge${nudges.length > 1 ? "s" : ""} (session ${sessionID})`, { nudges });
     },
   };

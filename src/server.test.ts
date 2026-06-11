@@ -293,7 +293,7 @@ describe("server", () => {
 
         // The system prompt should have been updated with the nudge
         ok(
-          output.system.some(s => s.includes("Rules nudge")),
+          output.system[0].includes("Rules nudge"),
           "system prompt should contain injected nudge"
         );
       } finally {
@@ -442,7 +442,7 @@ describe("server", () => {
       );
 
       ok(
-        output.system.some(s => s.includes("Identity Check")),
+        output.system[0].includes("Identity Check"),
         "system prompt should contain identity nudge after user message"
       );
     });
@@ -463,7 +463,7 @@ describe("server", () => {
         { sessionID: "sess-1", model: {} } as any,
         output1
       );
-      ok(output1.system.some(s => s.includes("Identity Check")), "first transform should inject nudge");
+      ok(output1.system[0].includes("Identity Check"), "first transform should inject nudge");
 
       // Second system transform — no new user message, flag should be gone
       const output2 = { system: ["You are a helpful assistant."] };
@@ -581,11 +581,7 @@ describe("server", () => {
         { sessionID: "sess-1", model: {} } as any,
         output1
       );
-      // Nudge is pushed to empty array (push works on []), so system should have content
-      ok(
-        output1.system.some(s => s.includes("Identity Check")),
-        "nudge should be pushed even when system was empty"
-      );
+      deepStrictEqual(output1.system, [], "no system prompt to inject into");
 
       // Second transform — flag should be cleared, no injection
       const output2 = { system: ["You are a helpful assistant."] };
@@ -619,7 +615,7 @@ describe("server", () => {
         output1
       );
 
-      ok(output1.system.some(s => s.includes("Identity Check")), "session 1 should get nudge");
+      ok(output1.system[0].includes("Identity Check"), "session 1 should get nudge");
 
       // Session 2 should still have flag set
       const output2 = { system: ["Persona B"] };
@@ -628,7 +624,7 @@ describe("server", () => {
         output2
       );
 
-      ok(output2.system.some(s => s.includes("Identity Check")), "session 2 should also get nudge");
+      ok(output2.system[0].includes("Identity Check"), "session 2 should also get nudge");
     });
 
     it("should inject both user-message identity nudge and cadence nudge in same turn", async () => {
@@ -657,11 +653,11 @@ describe("server", () => {
       );
 
       ok(
-        output.system.some(s => s.includes("Identity Check")),
+        output.system[0].includes("Identity Check"),
         "should contain identity nudge from user-message"
       );
       ok(
-        output.system.some(s => s.includes("Rule Compliance")),
+        output.system[0].includes("Rule Compliance"),
         "should contain rules nudge from cadence"
       );
     });
