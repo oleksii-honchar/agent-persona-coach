@@ -32,7 +32,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
   enabled: true,
   categories: {
     identity: { enabled: true, cadence: 10, afterEachUserMessage: true },
-    rules: { enabled: true, cadence: 10, criticalPermissions: ["write", "bash", "task", "create"], criticalTools: [] },
+    rules: { enabled: true, cadence: 10, criticalPermissions: [], criticalTools: [] },
     references: { enabled: true, cadence: 30 },
     progress: { enabled: true, cadence: 20 },
   },
