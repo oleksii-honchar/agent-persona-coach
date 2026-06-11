@@ -4,12 +4,12 @@ title: "Agent Persona Coach — Internal Components"
 c4_level: component
 system: agent-persona-coach
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-10T11:50:00Z"
+updatedAt: "2026-06-11T17:55:00+02:00"
 tags: [plugin, c4, component]
 see_also:
   - "architectures/agent-persona-coach/containers/0001-plugin-container.container.md"
   - "specifications/0001-plugin-configuration.spec.md"
-  - "adrs/0003-per-user-message-identity-nudge.adr.md"
+  - "adrs/0004-remove-system-prompt-injection.adr.md"
 linked_elements: []
 deprecated:
   date: null
@@ -31,15 +31,12 @@ C4Component
     Component(initialize, "initializeSession", "Method", "Generates or retrieves cached questions")
     Component(onToolBefore, "onToolBefore", "Method", "Pre-tool rule compliance check")
     Component(onToolAfter, "onToolAfter", "Method", "Post-tool cadence-based nudges")
-    Component(updateSystemPrompt, "updateSystemPrompt", "Method", "Injects nudges into system prompt")
-    Component(resolveAgentInfo, "resolveAgentInfo", "Method", "Fetches agent config from SDK client")
-    Component(buildIdentityNudge, "buildIdentityNudge", "Method", "Builds identity nudge on demand")
   }
 
   Component_Ext(cache, "CoachQuestionsCache", "Class", "In-memory question cache")
   Component_Ext(stateMgr, "CoachStateManager", "Class", "Per-session state tracking")
   Component_Ext(generator, "CoachGenerator", "Class", "LLM question generation")
-  Component_Ext(injector, "formatNudge/injectNudge", "Functions", "Nudge formatting and injection")
+  Component_Ext(injector, "formatNudge", "Function", "Nudge formatting (injectNudge removed)")
 
   Rel(initialize, generator, "Calls for generation")
   Rel(initialize, cache, "Stores in cache")
@@ -48,8 +45,6 @@ C4Component
   Rel(onToolAfter, stateMgr, "Increments tool count")
   Rel(onToolAfter, cache, "Retrieves identity/reference/progress questions")
   Rel(onToolAfter, injector, "Formats nudges")
-  Rel(updateSystemPrompt, injector, "Appends to system prompt")
-  Rel(buildIdentityNudge, cache, "Retrieves identity questions")
 ```
 
 ## Elements
@@ -59,10 +54,15 @@ C4Component
 | `initialize` | initializeSession | Component | TypeScript | Called at session start; triggers generation or cache retrieval |
 | `onToolBefore` | onToolBefore | Component | TypeScript | Called before critical tools; increments critical count, checks cadence |
 | `onToolAfter` | onToolAfter | Component | TypeScript | Called after each tool; increments tool count, checks all cadence categories |
-| `updateSystemPrompt` | updateSystemPrompt | Component | TypeScript | Injects accumulated nudges into the last system prompt element |
-| `resolveAgentInfo` | resolveAgentInfo | Component | TypeScript | Fetches full agent config from SDK client when agentInfo is empty |
-| `buildIdentityNudge` | buildIdentityNudge | Component | TypeScript | Builds an identity nudge on demand using cached questions; used by server for per-user-message injection |
+
+## Removed Components
+
+The following components were removed per [[adrs/0004-remove-system-prompt-injection.adr.md]]:
+
+- **`updateSystemPrompt`** — Injected accumulated nudges into the last system prompt element. Dead code after system.transform removal.
+- **`resolveAgentInfo`** — Fetched full agent config from SDK client when agentInfo was empty. Dead code; removed.
+- **`buildIdentityNudge`** — Built identity nudge on demand using cached questions; used by server for per-user-message injection via system.transform. Dead code; removed.
 
 ## Notes
 
-`onToolAfter` accumulates all matching nudges (not just the first) — this was a fix for the priority collision issue where identity checks were blocking progress checks. The `resolveAgentInfo` method handles both V1 (`prompt` field) and V2 (`system` field) agent info formats. The `buildIdentityNudge` method is a focused public API that allows the server hook to format identity nudges without exposing internal `buildNudge` implementation details.
+`onToolAfter` accumulates all matching nudges (not just the first) — this was a fix for the priority collision issue where identity checks were blocking progress checks. The `resolveAgentInfo` method was removed along with the system.transform path. The `buildIdentityNudge` method was a focused public API that allowed the server hook to format identity nudges without exposing internal `buildNudge` implementation details; it is no longer needed because initialization is now handled in `chat.message` per [[adrs/0005-move-lazy-init-to-chat-message.adr.md]].

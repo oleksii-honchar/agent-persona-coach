@@ -2,12 +2,13 @@
 type: concept
 title: "System-Reminder Injection"
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-10T11:50:00Z"
+updatedAt: "2026-06-11T17:55:00+02:00"
 tags: [injection, system-reminder, nudge, prompting]
 see_also:
   - "concepts/0002-reflection-categories.concept.md"
-  - "architectures/agent-persona-coach/components/0001-internal-components.component.md"
-  - "adrs/0003-per-user-message-identity-nudge.adr.md"
+  - "concepts/0004-prompt-caching-sensitivity.concept.md"
+  - "adrs/0004-remove-system-prompt-injection.adr.md"
+  - "adrs/0005-move-lazy-init-to-chat-message.adr.md"
 deprecated:
   date: null
   reason: null
@@ -18,11 +19,11 @@ deprecated:
 
 ## What
 
-The plugin injects reflection nudges as XML `<system-reminder>` blocks. This format is recognized by the LLM as a system-level instruction that doesn't interfere with conversation context. The injection happens via three mechanisms:
+The plugin injects reflection nudges as XML `<system-reminder>` blocks via a single delivery mechanism:
 
-1. **`output.inject`** (synthetic system message) — Used by `tool.execute.after` to inject nudges as additional system messages in the chat output.
-2. **`experimental.chat.system.transform`** — Used to append nudges to the last element of the system prompt array, wrapping them inside any existing `<system-reminder>` block.
-3. **`chat.message` → `pendingUserMessageIdentity` → `system.transform`** — When `afterEachUserMessage` is enabled, `chat.message` sets a per-session flag. `experimental.chat.system.transform` checks the flag, builds an identity nudge via `buildIdentityNudge()`, and injects it into the system prompt.
+1. **`output.inject`** (synthetic user message) — Used by `tool.execute.after` to inject nudges as user messages containing `<system-reminder>` blocks in the text content.
+
+The `<system-reminder>` format is recognized by the LLM as a system-level instruction that doesn't interfere with conversation context, even when delivered as a synthetic user message.
 
 ## Why
 
@@ -41,16 +42,21 @@ System-level instructions have higher authority than user messages in LLM attent
 </system-reminder>
 ```
 
-**Injection strategy (`injectNudge`):**
-- If the system prompt already ends with a `</system-reminder>` tag, insert the new nudge before the last closing tag.
-- Otherwise, append the nudge at the end of the system prompt.
+**Current hook flow:**
+1. `chat.message` → `initializeSession()` on first message (ADR-0005)
+2. `tool.execute.before` → `onToolBefore()` → rule nudge (logged, NOT injected — see [[memories/0005-rule-compliance-not-delivered.memory.md]])
+3. `tool.execute.after` → `onToolAfter()` → identity/reference/progress nudges → `output.inject`
 
-This strategy ensures multiple nudges (e.g., identity + progress at call 8) are coalesced into a single `<system-reminder>` block rather than creating multiple separate blocks.
+**Delivery path:** Nudges are mapped to `output.inject = nudges.map(text => ({ role: "user", text }))` in `server.ts`. Each nudge becomes a separate synthetic user message containing a `<system-reminder>` block. The LLM processes these as instructions due to the XML format, not as user input.
 
-**Hook flow:**
-1. `chat.message` → sets `pendingUserMessageIdentity` flag (when `afterEachUserMessage` enabled)
-2. `tool.execute.before` → `onToolBefore()` → builds rule nudge → stores in `lastNudges`
-3. `tool.execute.after` → `onToolAfter()` → builds cadence nudges → stores in `lastNudges`
-4. `experimental.chat.system.transform` → checks `pendingUserMessageIdentity` flag → injects user-message identity nudge → then injects `lastNudges`
+**Cache-friendly:** Message injection via `output.inject` appends content AFTER the Anthropic cache breakpoint — the cached prefix remains valid. Only the new content is processed. See [[concepts/0004-prompt-caching-sensitivity.concept.md]].
 
-**Note:** The `pendingUserMessageIdentity` flag is consumed (deleted) on first check, preventing duplicate injection even if `system.transform` is called multiple times per turn.
+## Removed Mechanisms
+
+The following injection mechanisms were removed per [[adrs/0004-remove-system-prompt-injection.adr.md]]:
+
+- **`experimental.chat.system.transform`** — Modified the system prompt on every LLM request, invalidating the Anthropic system cache. Removed because system prompt modification is the primary cache invalidation problem.
+- **`pendingUserMessageIdentity` flag** — Used by `chat.message` to signal `system.transform` to inject an identity nudge. Removed with the system.transform path.
+- **`injectNudge()`** — Function that appended a nudge into the system prompt text (in `injector.ts`). Dead code after system.transform removal; removed.
+- **`updateSystemPrompt()`** — Method in `AgentPersonaCoachPlugin` that called `injectNudge()`. Dead code; removed.
+- **`buildIdentityNudge()`** — Method for on-demand identity nudge formatting via `system.transform`. Dead code; removed.
