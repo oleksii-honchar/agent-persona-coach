@@ -46,7 +46,7 @@ The plugin accepts a configuration object via `AgentPersonaCoachPlugin` construc
       "rules": {
         "enabled": true,
         "cadence": 10,
-        "criticalPermissions": ["write", "bash", "task", "create"],
+        "criticalPermissions": ["bash", "edit", "task"],
         "criticalTools": []
       },
       "references": {
@@ -72,12 +72,19 @@ The plugin accepts a configuration object via `AgentPersonaCoachPlugin` construc
 | `categories.identity.afterEachUserMessage` | `boolean` | `true` | Inject identity check after every user message |
 | `categories.rules.enabled` | `boolean` | `true` | Enable rule compliance nudges |
 | `categories.rules.cadence` | `number` | `10` | Inject rule compliance nudge every N critical tool calls |
-| `categories.rules.criticalPermissions` | `string[]` | `["write", "bash", "task", "create"]` | MetaTool-compatible permission names that trigger rule compliance before execution |
+| `categories.rules.criticalPermissions` | `string[]` | `["bash", "edit", "task"]` | MetaTool-compatible permission names that trigger rule compliance before execution |
 | `categories.rules.criticalTools` | `string[]` | `[]` | Fallback tool names that trigger rule compliance (used when no permission metadata) |
 | `categories.references.enabled` | `boolean` | `true` | Enable reference check nudges |
 | `categories.references.cadence` | `number` | `30` | Inject reference check once after N tool calls |
 | `categories.progress.enabled` | `boolean` | `true` | Enable progress check nudges |
 | `categories.progress.cadence` | `number` | `20` | Inject progress check every N tool calls |
+| `coachPrompt` | `string` | `[see Default Prompt]` | Custom prompt template for generating reflection questions. Must contain `{personaText}` placeholder. |
+
+> **Partial Config Override:** The plugin uses deep merge — only the fields you specify in your config are overridden. All other fields retain their default values. For example, setting `{ "categories": { "identity": { "cadence": 5 } } }` changes only the identity cadence; all other categories and fields remain at defaults.
+
+### Default Prompt
+
+The default prompt template generates persona-specific reflection questions across 4 categories (Identity Check, Rule Compliance, Reference Check, Progress Check). It is defined in `DEFAULT_CONFIG.coachPrompt` in `src/types.ts`.
 
 ### Example: Custom Cadences
 
@@ -105,6 +112,18 @@ The plugin accepts a configuration object via `AgentPersonaCoachPlugin` construc
   }
 }
 ```
+
+### Example: Custom Prompt
+
+```jsonc
+{
+  "agent-persona-coach": {
+    "coachPrompt": "You are a {personaText}. Generate 2 reflection questions per category: identity, rules, references, and progress."
+  }
+}
+```
+
+> **Note:** The `{personaText}` placeholder is **required** in custom prompts. Without it, the agent's persona text won't be injected into the prompt, resulting in an empty or incomplete LLM prompt.
 
 ## Categories
 

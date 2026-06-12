@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
-import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
+import { strictEqual, ok, deepStrictEqual, notStrictEqual } from "node:assert/strict";
 import { AgentPersonaCoachPlugin } from "./index.js";
-import { DEFAULT_CONFIG } from "./types.js";
+import { DEFAULT_CONFIG, deepMerge } from "./types.js";
 import { aMockChatClient } from "./test-utils.js";
 
 const VALID_JSON_RESPONSE = JSON.stringify({
@@ -107,11 +107,11 @@ describe("AgentPersonaCoachPlugin", () => {
       strictEqual(typeof (plugin as any).onToolBefore, "undefined", "onToolBefore should not exist on plugin");
     });
 
-    it("should not trigger rules nudge when criticalPermissions is empty (DEFAULT_CONFIG)", () => {
-      // DEFAULT_CONFIG has criticalPermissions: [] — "write" is NOT critical
+    it("should not trigger rules nudge when tool is not in criticalPermissions (DEFAULT_CONFIG)", () => {
+      // DEFAULT_CONFIG has criticalPermissions: ["bash", "edit", "task"] — "write" is NOT critical
       for (let i = 0; i < 10; i++) {
         const result = plugin.onToolAfter(SESSION_ID, "write", {}, AGENT_NAME, AGENT_INFO_V1);
-        ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger at call ${i + 1} (empty criticalPermissions)`);
+        ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger at call ${i + 1} (write not critical)`);
       }
     });
 
@@ -123,11 +123,11 @@ describe("AgentPersonaCoachPlugin", () => {
     });
 
     it("should trigger rules nudge at cadence when criticalPermissions includes tool name", async () => {
-      // Plugin with criticalPermissions: ["write"] — "write" IS critical
+      // Plugin with criticalPermissions: ["bash"] — "bash" IS critical
       const rulesPlugin = new AgentPersonaCoachPlugin({
         categories: {
           identity: { enabled: false, cadence: 10, afterEachUserMessage: true },
-          rules: { enabled: true, cadence: 10, criticalPermissions: ["write"], criticalTools: [] },
+          rules: { enabled: true, cadence: 10, criticalPermissions: ["bash"], criticalTools: [] },
           references: { enabled: false, cadence: 30 },
           progress: { enabled: false, cadence: 20 },
         },
@@ -138,12 +138,12 @@ describe("AgentPersonaCoachPlugin", () => {
 
       // Calls 1-9 — no rules nudge (below cadence)
       for (let i = 0; i < 9; i++) {
-        const result = rulesPlugin.onToolAfter(SESSION_ID, "write", {}, AGENT_NAME, AGENT_INFO_V1);
+        const result = rulesPlugin.onToolAfter(SESSION_ID, "bash", {}, AGENT_NAME, AGENT_INFO_V1);
         ok(!result.some(n => n.includes("Rule Compliance")), `Rules nudge should not trigger below cadence at call ${i + 1}`);
       }
 
       // Call 10 — rules nudge fires at cadence 10
-      const result = rulesPlugin.onToolAfter(SESSION_ID, "write", {}, AGENT_NAME, AGENT_INFO_V1);
+      const result = rulesPlugin.onToolAfter(SESSION_ID, "bash", {}, AGENT_NAME, AGENT_INFO_V1);
       ok(result.some(n => n.includes("Rule Compliance")), "Rules nudge should trigger at cadence 10");
     });
 
@@ -151,7 +151,7 @@ describe("AgentPersonaCoachPlugin", () => {
       const rulesPlugin = new AgentPersonaCoachPlugin({
         categories: {
           identity: { enabled: false, cadence: 10, afterEachUserMessage: true },
-          rules: { enabled: true, cadence: 10, criticalPermissions: ["write"], criticalTools: [] },
+          rules: { enabled: true, cadence: 10, criticalPermissions: ["bash"], criticalTools: [] },
           references: { enabled: false, cadence: 30 },
           progress: { enabled: false, cadence: 20 },
         },
@@ -269,6 +269,116 @@ describe("AgentPersonaCoachPlugin", () => {
 
       strictEqual(mockClient.calls.length, 1);
       strictEqual(mockClient.calls[0].modelOverride, undefined, "modelOverride should be undefined when not provided");
+    });
+  });
+
+  describe("deep merge config behavior", () => {
+    it("should preserve other categories when overriding only one category partially", () => {
+      const partialPlugin = new AgentPersonaCoachPlugin({
+        categories: { identity: { cadence: 5 } },
+      });
+      // Overridden value
+      strictEqual(partialPlugin.config.categories.identity.cadence, 5);
+      // Preserved from DEFAULT_CONFIG
+      strictEqual(partialPlugin.config.categories.rules.cadence, 10);
+      strictEqual(partialPlugin.config.categories.references.cadence, 30);
+      strictEqual(partialPlugin.config.categories.progress.cadence, 20);
+    });
+
+    it("should preserve other category fields when overriding one field in a category", () => {
+      const partialPlugin = new AgentPersonaCoachPlugin({
+        categories: { identity: { enabled: false } },
+      });
+      strictEqual(partialPlugin.config.categories.identity.enabled, false);
+      // Other fields in identity category preserved from DEFAULT_CONFIG
+      strictEqual(partialPlugin.config.categories.identity.cadence, 10);
+      strictEqual(partialPlugin.config.categories.identity.afterEachUserMessage, true);
+    });
+
+    it("should use DEFAULT_CONFIG.coachPrompt when no coachPrompt in config", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin();
+      plugin.setChatClient(mockClient);
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"), "Default prompt should contain IDENTITY CHECK");
+    });
+
+    it("should use custom coachPrompt when provided in config", async () => {
+      const customPrompt = "Custom coaching prompt: {personaText}";
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin({ coachPrompt: customPrompt });
+      plugin.setChatClient(mockClient);
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].messages[0].content.includes("Custom coaching prompt"), "Custom prompt should be used");
+      // Custom prompt replaces the default
+      ok(!mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"), "Custom prompt should not contain identity check section from default");
+    });
+
+    it("should fall back to DEFAULT_CONFIG.coachPrompt when coachPrompt is empty string", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin({ coachPrompt: "" });
+      plugin.setChatClient(mockClient);
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"), "Fallback to default prompt should contain IDENTITY CHECK");
+    });
+
+    it("should fall back to DEFAULT_CONFIG.coachPrompt when coachPrompt is null", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin({ coachPrompt: null as any });
+      plugin.setChatClient(mockClient);
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"), "Fallback to default prompt should contain IDENTITY CHECK");
+    });
+
+    it("should fall back to DEFAULT_CONFIG.coachPrompt when coachPrompt is undefined", async () => {
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin({ coachPrompt: undefined });
+      plugin.setChatClient(mockClient);
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(mockClient.calls.length, 1);
+      ok(mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"), "Fallback to default prompt should contain IDENTITY CHECK");
+    });
+
+    it("should preserve deepMerge semantics with multiple partial overrides", () => {
+      const mergedPlugin = new AgentPersonaCoachPlugin({
+        enabled: false,
+        categories: {
+          identity: { cadence: 15 },
+          progress: { enabled: false },
+        },
+      });
+      // Overridden values
+      strictEqual(mergedPlugin.config.enabled, false);
+      strictEqual(mergedPlugin.config.categories.identity.cadence, 15);
+      strictEqual(mergedPlugin.config.categories.progress.enabled, false);
+      // Preserved from DEFAULT_CONFIG
+      strictEqual(mergedPlugin.config.categories.identity.enabled, true);
+      strictEqual(mergedPlugin.config.categories.rules.cadence, 10);
+      strictEqual(mergedPlugin.config.categories.progress.cadence, 20);
+    });
+
+    it("should use DEFAULT_CONFIG.coachPrompt from deepMerge behavior (not defaulting in the plugin)", async () => {
+      // This test confirms the coachPrompt flows through initializeSession
+      // and does NOT use the default just because the config was built via deepMerge
+      const customPrompt = "Focused prompt: {personaText}";
+      mockClient = aMockChatClient(VALID_JSON_RESPONSE);
+      plugin = new AgentPersonaCoachPlugin({ coachPrompt: customPrompt });
+      plugin.setChatClient(mockClient);
+      await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      strictEqual(mockClient.calls.length, 1);
+      // BuildCoachPrompt should use the custom promptTemplate
+      ok(mockClient.calls[0].messages[0].content.includes("Focused prompt"));
+      ok(!mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"));
     });
   });
 });

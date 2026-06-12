@@ -2,10 +2,11 @@
 type: memory
 title: "Rule Compliance Nudge Not Delivered After System Transform Removal"
 createdAt: "2026-06-11T17:55:00+02:00"
-updatedAt: "2026-06-11T17:55:00+02:00"
+updatedAt: "2026-06-12T14:20:00Z"
 tags: [nudge, rule-compliance, delivery-gap, gotcha]
 see_also:
   - "adrs/0004-remove-system-prompt-injection.adr.md"
+  - "adrs/0009-move-rules-nudge-to-ontoolafter.adr.md"
 deprecated:
   date: null
   reason: null
@@ -37,3 +38,9 @@ The `onToolBefore()` method still exists in `AgentPersonaCoachPlugin` and still 
 **Rule compliance checks are currently non-functional.** When a critical tool (write, bash, task, create) is about to execute, the nudge asking the agent to verify compliance with its rules is created but never shown to the LLM. The agent does NOT get the compliance reminder before making critical changes.
 
 **Resolution needed:** Either inject the nudge via `output.inject` in `tool.execute.before`, or remove the dead code (`onToolBefore` + the entire `tool.execute.before` handler).
+
+## Resolution
+
+ADR-0009 (2026-06-12): The `onToolBefore` method was removed and rules nudge logic
+was moved to `onToolAfter`, joining the existing `output.inject` → `flushInjectedMessages()`
+→ SQLite persistence pipeline. All four nudge categories now use a single delivery path.

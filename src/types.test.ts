@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
-import { strictEqual } from "node:assert/strict";
-import { extractPersona, extractPersonaFromSystem, DEFAULT_CONFIG } from "./types.js";
+import { strictEqual, deepStrictEqual, notStrictEqual } from "node:assert/strict";
+import { extractPersona, extractPersonaFromSystem, DEFAULT_CONFIG, deepMerge, DeepPartial } from "./types.js";
 
 describe("extractPersona", () => {
   it("should extract persona from V1 agent with 'prompt' field", () => {
@@ -59,10 +59,10 @@ describe("DEFAULT_CONFIG", () => {
     strictEqual(DEFAULT_CONFIG.categories.identity.afterEachUserMessage, true);
   });
 
-  it("should have rules enabled with cadence 10 and empty criticalPermissions", () => {
+  it("should have rules enabled with cadence 10 and criticalPermissions set", () => {
     strictEqual(DEFAULT_CONFIG.categories.rules.enabled, true);
     strictEqual(DEFAULT_CONFIG.categories.rules.cadence, 10);
-    strictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions.length, 0);
+    deepStrictEqual(DEFAULT_CONFIG.categories.rules.criticalPermissions, ["bash", "edit", "task"]);
   });
 
   it("should have references enabled with cadence 30", () => {
@@ -73,6 +73,112 @@ describe("DEFAULT_CONFIG", () => {
   it("should have progress enabled with cadence 20", () => {
     strictEqual(DEFAULT_CONFIG.categories.progress.enabled, true);
     strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 20);
+  });
+
+  it("should have coachPrompt as a non-empty string with key phrases", () => {
+    strictEqual(typeof DEFAULT_CONFIG.coachPrompt, "string");
+    notStrictEqual(DEFAULT_CONFIG.coachPrompt, "");
+    strictEqual(DEFAULT_CONFIG.coachPrompt.includes("IDENTITY CHECK"), true);
+    strictEqual(DEFAULT_CONFIG.coachPrompt.includes("{personaText}"), true);
+  });
+});
+
+describe("deepMerge", () => {
+  it("should merge partial nested objects (only change one category field, others preserved)", () => {
+    const target = {
+      enabled: true,
+      categories: {
+        identity: { enabled: true, cadence: 10, afterEachUserMessage: true },
+        rules: { enabled: true, cadence: 10, criticalPermissions: ["bash", "edit", "task"], criticalTools: [] },
+        references: { enabled: true, cadence: 30 },
+        progress: { enabled: true, cadence: 20 },
+      },
+      coachPrompt: "default prompt",
+    };
+    const source: DeepPartial<typeof target> = {
+      categories: {
+        identity: { enabled: false },
+      },
+    };
+    const result = deepMerge(target, source);
+    // identity.enabled changed
+    strictEqual(result.categories.identity.enabled, false);
+    // identity.cadence preserved
+    strictEqual(result.categories.identity.cadence, 10);
+    // identity.afterEachUserMessage preserved
+    strictEqual(result.categories.identity.afterEachUserMessage, true);
+    // rules untouched
+    strictEqual(result.categories.rules.enabled, true);
+    strictEqual(result.categories.rules.cadence, 10);
+    // references untouched
+    strictEqual(result.categories.references.enabled, true);
+    // progress untouched
+    strictEqual(result.categories.progress.enabled, true);
+    // top-level fields preserved
+    strictEqual(result.enabled, true);
+  });
+
+  it("should replace arrays (not merge them)", () => {
+    const target = { items: ["a", "b", "c"], name: "test" };
+    const source: DeepPartial<typeof target> = { items: ["x", "y"] };
+    const result = deepMerge(target, source);
+    deepStrictEqual(result.items, ["x", "y"]);
+    strictEqual(result.name, "test");
+  });
+
+  it("should skip undefined values in source", () => {
+    const target = { a: 1, b: 2, c: 3 };
+    const source: DeepPartial<typeof target> = { a: 10, b: undefined };
+    const result = deepMerge(target, source);
+    strictEqual(result.a, 10); // defined value replaces
+    strictEqual(result.b, 2);  // undefined skipped, original preserved
+    strictEqual(result.c, 3);  // untouched
+  });
+
+  it("should return target unchanged for empty source", () => {
+    const target = { a: 1, b: { c: 2 } };
+    const result = deepMerge(target, {});
+    strictEqual(result.a, 1);
+    strictEqual(result.b.c, 2);
+  });
+
+  it("should replace primitive values from source", () => {
+    const target = { count: 5, label: "old", active: false };
+    const source: DeepPartial<typeof target> = { count: 42, label: "new", active: true };
+    const result = deepMerge(target, source);
+    strictEqual(result.count, 42);
+    strictEqual(result.label, "new");
+    strictEqual(result.active, true);
+  });
+
+  it("should deeply merge nested objects at multiple levels", () => {
+    const target = {
+      level1: {
+        level2: {
+          level3: { value: "deep", flag: true },
+          other: 99,
+        },
+      },
+    };
+    const source: DeepPartial<typeof target> = {
+      level1: {
+        level2: {
+          level3: { value: "overridden" },
+        },
+      },
+    };
+    const result = deepMerge(target, source);
+    strictEqual(result.level1.level2.level3.value, "overridden");
+    strictEqual(result.level1.level2.level3.flag, true); // preserved
+    strictEqual(result.level1.level2.other, 99); // preserved
+  });
+
+  it("should not mutate the target object", () => {
+    const target = { a: 1, b: 2 };
+    const source: DeepPartial<typeof target> = { a: 99 };
+    const result = deepMerge(target, source);
+    strictEqual(result.a, 99); // merged correctly
+    strictEqual(target.a, 1);  // original unchanged
   });
 });
 

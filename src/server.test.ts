@@ -196,7 +196,7 @@ describe("server", () => {
       const plugin = new AgentPersonaCoachPlugin({
         categories: {
           identity: { enabled: true, cadence: 10, afterEachUserMessage: false },
-          rules: { enabled: true, cadence: 10, criticalPermissions: ["write"], criticalTools: [] },
+          rules: { enabled: true, cadence: 10, criticalPermissions: ["bash", "edit", "task"], criticalTools: [] },
           references: { enabled: true, cadence: 30 },
           progress: { enabled: true, cadence: 20 },
         },
@@ -219,7 +219,7 @@ describe("server", () => {
       const plugin = new AgentPersonaCoachPlugin({
         categories: {
           identity: { enabled: false, cadence: 10, afterEachUserMessage: true },
-          rules: { enabled: true, cadence: 10, criticalPermissions: ["write"], criticalTools: [] },
+          rules: { enabled: true, cadence: 10, criticalPermissions: ["bash", "edit", "task"], criticalTools: [] },
           references: { enabled: true, cadence: 30 },
           progress: { enabled: true, cadence: 20 },
         },

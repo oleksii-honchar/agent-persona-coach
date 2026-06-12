@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, it, beforeEach } from "node:test";
 import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
 import { CoachQuestionsCache } from "./cache.js";
+import { DEFAULT_CONFIG } from "./types.js";
 import type { CoachQuestions } from "./types.js";
 
 function aCoachQuestions(overrides: Partial<CoachQuestions> = {}): CoachQuestions {
@@ -159,7 +160,7 @@ describe("CoachQuestionsCache", () => {
       cache.set(questions);
 
       let generateCalled = false;
-      const result = await cache.getOrGenerate("tester", personaText, undefined, async () => {
+      const result = await cache.getOrGenerate("tester", personaText, undefined, DEFAULT_CONFIG.coachPrompt, async () => {
         generateCalled = true;
         return aCoachQuestions();
       });
@@ -174,7 +175,7 @@ describe("CoachQuestionsCache", () => {
       const generated = aCoachQuestions({ agentName: "builder", personaHash });
 
       let generateCalled = false;
-      const result = await cache.getOrGenerate("builder", personaText, undefined, async () => {
+      const result = await cache.getOrGenerate("builder", personaText, undefined, DEFAULT_CONFIG.coachPrompt, async () => {
         generateCalled = true;
         return generated;
       });
@@ -184,7 +185,7 @@ describe("CoachQuestionsCache", () => {
 
       // Subsequent getOrGenerate should return cached value without calling generate again
       let generateCalledAgain = false;
-      const cached = await cache.getOrGenerate("builder", personaText, undefined, async () => {
+      const cached = await cache.getOrGenerate("builder", personaText, undefined, DEFAULT_CONFIG.coachPrompt, async () => {
         generateCalledAgain = true;
         return aCoachQuestions();
       });
@@ -203,7 +204,8 @@ describe("CoachQuestionsCache", () => {
         "coach",
         personaText,
         { providerID: "puma", modelID: "qwopus3.6" },
-        async (_agentName, _personaText, modelOverride) => {
+        DEFAULT_CONFIG.coachPrompt,
+        async (_agentName, _personaText, _promptTemplate, modelOverride) => {
           receivedModelOverride = modelOverride;
           return generated;
         }
@@ -224,7 +226,8 @@ describe("CoachQuestionsCache", () => {
         "coach",
         personaText,
         undefined,
-        async (_agentName, _personaText, modelOverride) => {
+        DEFAULT_CONFIG.coachPrompt,
+        async (_agentName, _personaText, _promptTemplate, modelOverride) => {
           receivedModelOverride = modelOverride;
           return generated;
         }
@@ -245,6 +248,7 @@ describe("CoachQuestionsCache", () => {
         "coach",
         personaText,
         { providerID: "puma", modelID: "qwopus3.6" },
+        DEFAULT_CONFIG.coachPrompt,
         async () => {
           generateCalled = true;
           return aCoachQuestions();

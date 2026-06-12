@@ -44,13 +44,14 @@ export class CoachGenerator {
   async generate(
     agentName: string,
     personaText: string,
+    promptTemplate: string,
     modelOverride?: ModelOverride
   ): Promise<CoachQuestions> {
     if (!personaText.trim()) {
       return this.emptyQuestions(agentName, personaText);
     }
 
-    const prompt = buildCoachPrompt(personaText);
+    const prompt = buildCoachPrompt(personaText, promptTemplate);
     const personaHash = createHash("sha256").update(personaText).digest("hex").slice(0, 16);
 
     try {

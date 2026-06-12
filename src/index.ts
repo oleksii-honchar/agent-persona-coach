@@ -1,6 +1,6 @@
 import type { ChatClient } from "./generator.js";
-import type { CoachState, PluginConfig } from "./types.js";
-import { DEFAULT_CONFIG, extractPersona } from "./types.js";
+import type { CoachState, DeepPartial, PluginConfig } from "./types.js";
+import { DEFAULT_CONFIG, extractPersona, deepMerge } from "./types.js";
 import { CoachQuestionsCache } from "./cache.js";
 import { CoachGenerator, extractJsonFromMarkdown } from "./generator.js";
 import { CoachStateManager } from "./state.js";
@@ -26,8 +26,8 @@ export class AgentPersonaCoachPlugin {
   private stateManager: CoachStateManager;
   private agentPersonas = new Map<string, string>();
 
-  constructor(config: Partial<PluginConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  constructor(config: DeepPartial<PluginConfig> = {}) {
+    this.config = deepMerge(DEFAULT_CONFIG, config);
     this.cache = new CoachQuestionsCache();
     this.generator = new CoachGenerator(this);
     this.stateManager = new CoachStateManager(this.config);
@@ -75,13 +75,17 @@ export class AgentPersonaCoachPlugin {
 
     this.agentPersonas.set(agentName, personaText);
 
+    // Guard against empty/null coachPrompt — fall back to default
+    const promptTemplate = this.config.coachPrompt || DEFAULT_CONFIG.coachPrompt;
+
     // Generate or retrieve cached questions
     const questions = await this.cache.getOrGenerate(
       agentName,
       personaText,
       agentInfo.model,
-      (name: string, text: string, modelOverride) =>
-        this.generator.generate(name, text, modelOverride)
+      promptTemplate,
+      (name: string, text: string, promptTmpl: string, modelOverride) =>
+        this.generator.generate(name, text, promptTmpl, modelOverride)
     );
 
     log.info(`Session initialized for agent ${agentName} with ${Object.values(questions.questions).flat().length} questions`);

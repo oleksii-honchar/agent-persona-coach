@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
 import { CoachGenerator } from "./generator.js";
+import { DEFAULT_CONFIG } from "./types.js";
 import { aMockChatClient } from "./test-utils.js";
 import * as loggerModule from "./logger.js";
 
@@ -35,7 +36,7 @@ describe("CoachGenerator", () => {
 
   describe("generate with valid JSON", () => {
     it("should return parsed questions on successful generation", async () => {
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.agentName, "test-agent");
       ok(result.personaHash.length > 0);
@@ -47,7 +48,7 @@ describe("CoachGenerator", () => {
     });
 
     it("should call the chat client with correct model and prompt", async () => {
-      await generator.generate("test-agent", "You are a helper.");
+      await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(mockClient.calls.length, 1);
       strictEqual(mockClient.calls[0].model, "default");
@@ -60,7 +61,7 @@ describe("CoachGenerator", () => {
       mockClient = aMockChatClient(JSON.stringify({ identity: ["Who am I?"] }));
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       deepStrictEqual(result.questions.identity, ["Who am I?"]);
       deepStrictEqual(result.questions.rules, []);
@@ -74,7 +75,7 @@ describe("CoachGenerator", () => {
       mockClient = aMockChatClient(MARKDOWN_WRAPPED_JSON);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       deepStrictEqual(result.questions.identity, ["Who am I?"]);
       deepStrictEqual(result.questions.rules, ["Am I following the rules?"]);
@@ -84,7 +85,7 @@ describe("CoachGenerator", () => {
       mockClient = aMockChatClient(MARKDOWN_WRAPPED_JSON_NO_LANG);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       deepStrictEqual(result.questions.identity, ["Who am I?"]);
     });
@@ -101,7 +102,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(responseWithText);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       deepStrictEqual(result.questions.identity, ["Who am I?"]);
     });
@@ -112,7 +113,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(INVALID_JSON_RESPONSE);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.agentName, "test-agent");
       ok(result.personaHash.length > 0);
@@ -127,7 +128,7 @@ Hope this helps!`;
       generator = new CoachGenerator(mockClient);
 
       // Should not throw
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
       ok(result !== undefined);
       deepStrictEqual(result.questions.identity, []);
     });
@@ -135,7 +136,7 @@ Hope this helps!`;
 
   describe("generate with empty persona text", () => {
     it("should return empty questions for empty string", async () => {
-      const result = await generator.generate("test-agent", EMPTY_PERSONA);
+      const result = await generator.generate("test-agent", EMPTY_PERSONA, DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.agentName, "test-agent");
       ok(result.personaHash.length > 0);
@@ -146,14 +147,14 @@ Hope this helps!`;
     });
 
     it("should return empty questions for whitespace-only persona", async () => {
-      const result = await generator.generate("test-agent", WHITESPACE_PERSONA);
+      const result = await generator.generate("test-agent", WHITESPACE_PERSONA, DEFAULT_CONFIG.coachPrompt);
 
       deepStrictEqual(result.questions.identity, []);
       deepStrictEqual(result.questions.rules, []);
     });
 
     it("should not call the chat client when persona is empty", async () => {
-      await generator.generate("test-agent", EMPTY_PERSONA);
+      await generator.generate("test-agent", EMPTY_PERSONA, DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(mockClient.calls.length, 0);
     });
@@ -168,7 +169,7 @@ Hope this helps!`;
 
       generator = new CoachGenerator(erroringClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.agentName, "test-agent");
       deepStrictEqual(result.questions.identity, []);
@@ -184,7 +185,7 @@ Hope this helps!`;
       generator = new CoachGenerator(erroringClient);
 
       // Should not throw
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
       ok(result !== undefined);
     });
   });
@@ -194,7 +195,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(VALID_JSON_RESPONSE);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.", {
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt, {
         providerID: "puma",
         modelID: "qwopus3.6",
       });
@@ -210,7 +211,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(VALID_JSON_RESPONSE);
       generator = new CoachGenerator(mockClient);
 
-      await generator.generate("test-agent", "You are a helper.");
+      await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(mockClient.calls.length, 1);
       strictEqual(mockClient.calls[0].modelOverride, undefined);
@@ -220,7 +221,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(VALID_JSON_RESPONSE);
       generator = new CoachGenerator(mockClient);
 
-      await generator.generate("test-agent", "You are a helper.", {
+      await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt, {
         providerID: "puma",
         modelID: "qwopus3.6",
       });
@@ -235,7 +236,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(VALID_JSON_RESPONSE);
       generator = new CoachGenerator(mockClient);
 
-      await generator.generate("test-agent", "You are a helper.");
+      await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(mockClient.calls.length, 1);
       strictEqual(mockClient.calls[0].modelOverride, undefined, "modelOverride should be undefined when not provided");
@@ -274,7 +275,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(jsonWithLongQuestion);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.questions.identity.length, 2);
       // Long question passes through unchanged
@@ -295,7 +296,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(validJson);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       deepStrictEqual(result.questions.identity, ["Who am I?"]);
       deepStrictEqual(result.questions.rules, ["Am I following the rules?"]);
@@ -314,7 +315,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(jsonWithEmpty);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.questions.identity.length, 1);
       deepStrictEqual(result.questions.rules, []);
@@ -334,7 +335,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(jsonWithLongQuestion);
       generator = new CoachGenerator(mockClient);
 
-      await generator.generate("test-agent", "You are a helper.");
+      await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       const truncationWarnings = capturedWarnings.filter((w) => /truncated/i.test(w));
       strictEqual(truncationWarnings.length, 0);
@@ -352,7 +353,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(json);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       // identity: both pass through unchanged
       strictEqual(result.questions.identity[0], long);
@@ -382,7 +383,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(validJson);
       generator = new CoachGenerator(mockClient);
 
-      await generator.generate("test-agent", "You are a helper.");
+      await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       // There might be other warnings (from empty persona edge cases — none here)
       // Check that no truncation warnings were logged
@@ -402,7 +403,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(json);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       strictEqual(result.questions.identity[0], veryLong);
       strictEqual(result.questions.identity[0].length, 500);
@@ -436,7 +437,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(VALID_JSON_RESPONSE);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("vault-keeper", "You are a keeper.");
+      const result = await generator.generate("vault-keeper", "You are a keeper.", DEFAULT_CONFIG.coachPrompt);
 
       // The result should be correct
       ok(result.questions.identity.length > 0);
@@ -465,7 +466,7 @@ Hope this helps!`;
 
       generator = new CoachGenerator(erroringClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       // Should return empty questions
       deepStrictEqual(result.questions.identity, []);
@@ -478,7 +479,7 @@ Hope this helps!`;
     it("should NOT emit INFO log for empty persona", async () => {
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "");
+      const result = await generator.generate("test-agent", "", DEFAULT_CONFIG.coachPrompt);
 
       // Should return empty questions
       deepStrictEqual(result.questions.identity, []);
@@ -502,7 +503,7 @@ Hope this helps!`;
       mockClient = aMockChatClient(mixedJson);
       generator = new CoachGenerator(mockClient);
 
-      const result = await generator.generate("test-agent", "You are a helper.");
+      const result = await generator.generate("test-agent", "You are a helper.", DEFAULT_CONFIG.coachPrompt);
 
       // 2 + 1 + 0 + 3 = 6 total
       const generatedLog = infoCalls.find((c) => c.message.includes("Generated"));

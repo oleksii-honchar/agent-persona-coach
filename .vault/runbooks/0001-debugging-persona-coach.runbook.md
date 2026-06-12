@@ -2,14 +2,17 @@
 type: runbook
 title: "Debugging Agent Persona Coach"
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-10T11:50:00Z"
+updatedAt: "2026-06-12T14:20:00Z"
 tags: [debugging, troubleshooting, plugin]
 see_also:
   - "concepts/0003-system-reminder-injection.concept.md"
   - "memories/0001-priority-collision-gotcha.memory.md"
   - "memories/0002-config-defaults-discrepancy.memory.md"
   - "memories/0003-chatclient-silent-failure.memory.md"
+  - "memories/0006-critical-permissions-discrepancy.memory.md"
   - "adrs/0003-per-user-message-identity-nudge.adr.md"
+  - "adrs/0009-move-rules-nudge-to-ontoolafter.adr.md"
+  - "specifications/0001-plugin-configuration.spec.md"
 deprecated:
   date: null
   reason: null
@@ -67,13 +70,13 @@ INFO  YYYY-MM-DDTHH:mm:ss Session initialized for agent {name} with N questions
 
 **Check logs for:**
 ```
-DEBUG YYYY-MM-DDTHH:mm:ss identity (1 nudge)
-DEBUG YYYY-MM-DDTHH:mm:ss system prompt updated with 1 nudge (session {id})
+INFO  YYYY-MM-DDTHH:mm:ss identity (1 nudge)
+INFO  YYYY-MM-DDTHH:mm:ss identity, rules (2 nudges)
 ```
 
 **If no nudges appear:**
 - Check cadence configuration (defaults: identity=10, rules=10, references=30, progress=20)
-- Verify tool calls are being made; nudges only fire after/before tools
+- Verify tool calls are being made; nudges only fire after tools execute
 - Check if category is disabled in config
 
 ### 3b. Verify Per-User-Message Identity Nudge
@@ -81,7 +84,7 @@ DEBUG YYYY-MM-DDTHH:mm:ss system prompt updated with 1 nudge (session {id})
 **Check logs for:**
 ```
 DEBUG YYYY-MM-DDTHH:mm:ss Identity nudge queued for session {sessionId}
-DEBUG YYYY-MM-DDTHH:mm:ss identity (user-message) nudge injected (session {sessionId})
+INFO  YYYY-MM-DDTHH:mm:ss identity (user-message) nudge injected (session {sessionId})
 ```
 
 **If no per-user-message nudges appear:**
@@ -93,6 +96,62 @@ DEBUG YYYY-MM-DDTHH:mm:ss identity (user-message) nudge injected (session {sessi
 **If nudge appears twice in the same turn:**
 - This is expected when both `afterEachUserMessage` and cadence fire together
 - Both nudges are redundant but harmless; no deduplication is performed
+
+### 3c. Debug Rules Nudge Not Firing
+
+**Symptom:** Identity/progress/reference nudges appear but rules nudges never fire.
+
+**Enforcement chain (debug in this order):**
+
+```
+tool.execute.after fires for each tool
+  → plugin.onToolAfter(sessionID, toolName, args, agentName, {})
+    → stateManager.isToolCritical(toolName, undefined)
+      → criticalPermissions.includes(toolName)    ← VERIFY: tool name in array?
+      → if false: criticalTools.includes(toolName) ← VERIFY: fallback list?
+      → if both false: returns FALSE — NO RULES NUDGE
+    → stateManager.incrementCriticalToolCall(sessionID)
+      ← only if isToolCritical returned TRUE
+    → stateManager.shouldInjectRuleCompliance(state, toolName)
+      → criticalToolCallCount > 0 && cadence check
+    → buildNudge("rules", agentName, agentInfo)
+```
+
+**Check 1 — criticalPermissions is populated:**
+```bash
+# Both sources must have non-empty criticalPermissions:
+grep -A2 'criticalPermissions' ~/.config/opencode/opencode.jsonc
+grep -A2 'criticalPermissions' ./src/types.ts  # from repo root
+```
+
+Minimum expected value: `["bash", "edit", "task"]`. Add `"write"` if the `write` tool should be explicitly critical.
+
+**Check 2 — Plugin was rebuilt after config change:**
+```bash
+cd ~/www/misc/agent-persona-coach
+npm run build  # rebuilds dist/ from source
+```
+The registered plugin runs from `dist/`, not from `src/`. Changes to `DEFAULT_CONFIG` in `types.ts` require a rebuild.
+
+**Check 3 — Tool calls are critical:**
+```bash
+# In DB, check which tools were used in the session
+sqlite3 ~/.local/share/opencode/opencode-local.db \
+  "SELECT json_extract(data, '$.tool') as tool,
+          json_extract(data, '$.session_id') as sessionId,
+          count(*) as calls
+   FROM part
+   WHERE json_extract(data, '$.session_id') = 'SES_ID'
+     AND json_extract(data, '$.tool') IS NOT NULL
+   GROUP BY json_extract(data, '$.tool')"
+```
+Critical tools: bash, edit/write/apply_patch, task. Tools like read/glob/grep/skill are NOT critical by default.
+
+**Check 4 — Logs show rules nudge injection:**
+```
+INFO  ... rules, identity (2 nudges)  ← at tool.execute.after L137
+```
+Rules nudge now appears alongside other categories in the after-hook log (after ADR-0009).
 
 ### 4. Investigate Missing Progress Checks
 

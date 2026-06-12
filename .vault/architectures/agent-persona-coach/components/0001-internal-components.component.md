@@ -4,12 +4,14 @@ title: "Agent Persona Coach — Internal Components"
 c4_level: component
 system: agent-persona-coach
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-11T17:55:00+02:00"
+updatedAt: "2026-06-12T12:10:00Z"
 tags: [plugin, c4, component]
 see_also:
   - "architectures/agent-persona-coach/containers/0001-plugin-container.container.md"
   - "specifications/0001-plugin-configuration.spec.md"
   - "adrs/0004-remove-system-prompt-injection.adr.md"
+  - "adrs/0006-config-driven-prompts.adr.md"
+  - "adrs/0007-deep-merge-config-overrides.adr.md"
 linked_elements: []
 deprecated:
   date: null
@@ -66,3 +68,5 @@ The following components were removed per [[adrs/0004-remove-system-prompt-injec
 ## Notes
 
 `onToolAfter` accumulates all matching nudges (not just the first) — this was a fix for the priority collision issue where identity checks were blocking progress checks. The `resolveAgentInfo` method was removed along with the system.transform path. The `buildIdentityNudge` method was a focused public API that allowed the server hook to format identity nudges without exposing internal `buildNudge` implementation details; it is no longer needed because initialization is now handled in `chat.message` per [[adrs/0005-move-lazy-init-to-chat-message.adr.md]].
+
+**Config-driven prompts (per [[adrs/0006-config-driven-prompts.adr.md]]):** The `initializeSession` method now forwards `this.config.coachPrompt` through the call chain: `initializeSession` → `cache.getOrGenerate(agentName, personaText, modelOverride, promptTemplate, generate)` → `generator.generate(agentName, personaText, promptTemplate, modelOverride)` → `buildCoachPrompt(personaText, promptTemplate)`. The prompt template flows alongside persona text through the cache/generator chain. This is an additive change — the component relationships remain the same; only the method signatures accept an additional `promptTemplate` parameter.
