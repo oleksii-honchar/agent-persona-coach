@@ -63,7 +63,7 @@ export async function createServerHooks(
   plugin: AgentPersonaCoachPlugin,
   pluginInput: PluginInput
 ): Promise<Hooks> {
-  log.info("Plugin started");
+  log.info("[persona-coach] Plugin started");
 
   // Per-session state
   const sessionAgent = new Map<string, string>();
