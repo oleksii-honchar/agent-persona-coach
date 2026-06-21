@@ -52,6 +52,13 @@ Category 1: IDENTITY CHECK
 - Questions should make the agent reflect on whether it's staying in its lane
 - Example: "Am I [agent's role] or am I doing something outside my scope?"
 
+  Task Completion:
+  - Help agent assess if task is done and whether they're stuck in a loop
+  - Questions should ask:
+    - Have you accomplished the task goal?
+    - Am I looping through the same problem?
+    - If stuck, should I ask the human for help?
+
 Category 2: RULE COMPLIANCE
 - Purpose: Help the agent verify it's following its constraints BEFORE taking critical actions
 - Emphasize: NEVER, ALWAYS, MUST — the strongest constraints from the persona
@@ -68,6 +75,13 @@ Category 4: PROGRESS CHECK
 - Purpose: Help the agent assess progress and quality
 - Questions should make the agent evaluate whether it's on track
 - Example: "Is what I'm producing actually meeting [agent's goal]?"
+
+  Stagnation Check:
+  - Help agent assess if they're making real progress
+  - Questions should ask:
+    - Is my progress meaningful, or am I circling back?
+    - If the task isn't done, would a fundamentally different approach help?
+    - Should I seek human guidance at this point?
 
 Rules for questions:
 - Make them PERSONA-SPECIFIC, not generic
