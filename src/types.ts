@@ -118,12 +118,16 @@ export const DEFAULT_CONFIG: PluginConfig = {
  * - Undefined source values are skipped (target value preserved)
  * - Does NOT mutate the target object
  */
-export function deepMerge<T extends Record<string, unknown>>(target: T, source: DeepPartial<T>): T {
-  const result = { ...target } as Record<string, unknown>;
+export function deepMerge<T extends object>(target: T, source: DeepPartial<T>): T {
+  // Use string-keyed access — source/target are plain objects at runtime.
+  // DeepPartial<T> loses indexability at the type level, so we cast to Record<string, unknown>.
+  const s = source as Record<string, unknown>;
+  const t = target as Record<string, unknown>;
+  const result = { ...t } as Record<string, unknown>;
 
   for (const key of Object.keys(source)) {
-    const sourceValue = (source as Record<string, unknown>)[key];
-    const targetValue = target[key];
+    const sourceValue = s[key];
+    const targetValue = t[key];
 
     if (sourceValue === undefined) {
       continue;
