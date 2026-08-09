@@ -43,10 +43,17 @@ export interface Hooks {
     input: {
       sessionID?: string;
       model?: { providerID: string; id: string; [key: string]: unknown };
+      agent?: string; // NEW — agent identity for this LLM call
     },
     output: { system: string[] }
   ) => Promise<void>;
 }
+
+// Hidden native agents that reuse the session's sessionID for their LLM call.
+// (title/summary/compaction are mode:"primary" + hidden:true in agent.ts).
+// explore/scout are mode:"subagent" — they have their own sessions and can be
+// the legitimately tracked session agent, so they must NOT be in this list.
+const NATIVE_AGENT_NAMES = new Set(["title", "summary", "compaction"]);
 
 export type Plugin = (
   input: PluginInput,
@@ -132,23 +139,38 @@ export async function createServerHooks(
       const agentName = sessionAgent.get(sessionID);
       if (!agentName) return;
 
+      // ── Identity gate (primary defense) ─────────────────────────────
+      const callAgent = input.agent;
+      if (callAgent) {
+        // Skip native hidden agents by name
+        if (NATIVE_AGENT_NAMES.has(callAgent)) return;
+        // Skip calls whose agent doesn't match the session's tracked agent
+        if (callAgent !== agentName) return;
+      }
+      // If input.agent is absent (host without contract change), fall through
+      // to marker filter below — defense in depth during rollout.
+
       // Initialize session on first LLM call for this session
       if (!initializedSessions.has(sessionID)) {
         const personaText = extractPersonaFromSystem(output.system);
         if (personaText) {
+          // Claim BEFORE await — prevents concurrent system.transform calls (title-gen + real)
+          initializedSessions.add(sessionID);
           try {
             const model = input.model
               ? { providerID: input.model.providerID, modelID: input.model.id }
               : undefined;
-            await plugin.initializeSession?.(agentName, { system: personaText, model }).catch((err) => {
-              log.warn(`Failed to initialize session for agent ${agentName}`, { error: err instanceof Error ? err.message : String(err) });
-            });
-            initializedSessions.add(sessionID);
+            // NOTE: no `.catch()` here — rejection must propagate so the outer
+            // catch deletes the claim and the session can be retried.
+            await plugin.initializeSession?.(agentName, { system: personaText, model });
             log.info(`Session ${sessionID} initialized for agent ${agentName}`);
           } catch (err) {
+            initializedSessions.delete(sessionID);
             log.warn(`Failed to initialize session for agent ${agentName}`, { error: err instanceof Error ? err.message : String(err) });
           }
         } else {
+          // No persona (native prompt filtered out) — do NOT claim, so the real
+          // agent's call can initialize on its own system.transform invocation.
           log.warn(`No persona text extracted from system prompt for agent ${agentName}. Skipping.`);
         }
       }

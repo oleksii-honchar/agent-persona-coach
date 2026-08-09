@@ -160,14 +160,28 @@ export function extractPersona(agentInfo: Record<string, unknown>): string {
 }
 
 /**
+ * Prefixes of hidden native agent prompts that reuse the session's sessionID
+ * for their LLM call (agent/prompt/title.txt, compaction.txt, summary.txt).
+ * Used as a fallback filter (ADR-003) for hosts without the agent identity
+ * contract change — prefix matching minimizes false positives on real personas.
+ */
+const NATIVE_AGENT_PROMPT_MARKERS = [
+  "You are a title generator", // agent/prompt/title.txt
+  "You are an anchored context summarization assistant", // agent/prompt/compaction.txt
+  "Summarize what was done in this conversation", // agent/prompt/summary.txt
+];
+
+/**
  * Extract persona text from system prompts array.
- * Filters out tool JSON schemas and <system-reminder> blocks.
+ * Filters out tool JSON schemas, <system-reminder> blocks, and native
+ * agent prompts (title/compaction/summary).
  */
 export function extractPersonaFromSystem(systemPrompts: string[]): string {
   const filtered = systemPrompts.filter((prompt) => {
     const hasSchemaMarkers = prompt.includes('"type": "object"') && prompt.includes('"properties"');
     const hasSystemReminder = prompt.includes("<system-reminder>");
-    return !hasSchemaMarkers && !hasSystemReminder;
+    const isNativePrompt = NATIVE_AGENT_PROMPT_MARKERS.some((m) => prompt.startsWith(m));
+    return !hasSchemaMarkers && !hasSystemReminder && !isNativePrompt;
   });
   return filtered.map((p) => p.trim()).join("\n\n").trim();
 }

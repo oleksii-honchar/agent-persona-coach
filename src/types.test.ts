@@ -249,4 +249,50 @@ describe("extractPersonaFromSystem", () => {
     const result = extractPersonaFromSystem(prompts);
     strictEqual(result, '{"properties": {"name": {"type": "string"}}}');
   });
+
+  // ── Task 1 (ADR-003): native-prompt marker filter (fallback) ──
+
+  it("should drop a title generator prompt (native title.txt)", () => {
+    const prompts = ["You are a title generator. You output ONLY a thread title. Nothing else."];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "");
+  });
+
+  it("should drop an anchored context summarization prompt (native compaction.txt)", () => {
+    const prompts = ["You are an anchored context summarization assistant for coding sessions."];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "");
+  });
+
+  it("should drop a conversation summary prompt (native summary.txt)", () => {
+    const prompts = ["Summarize what was done in this conversation. Write like a pull request description."];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "");
+  });
+
+  it("should preserve a real persona prompt with no markers, schema, or system-reminder", () => {
+    const prompts = ["You are a helpful coding assistant. Always be concise."];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "You are a helpful coding assistant. Always be concise.");
+  });
+
+  it("should return only the real persona when mixed with a native marker prompt", () => {
+    const prompts = [
+      "You are a title generator. You output ONLY a thread title.",
+      "You are a real agent. Do good things.",
+    ];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "You are a real agent. Do good things.");
+  });
+
+  it("should still drop schema markers and <system-reminder> blocks alongside native markers", () => {
+    const prompts = [
+      "You are a title generator.",
+      '{"type": "object", "properties": {"name": {"type": "string"}}}',
+      "<system-reminder>remember this</system-reminder>",
+      "You are a real agent.",
+    ];
+    const result = extractPersonaFromSystem(prompts);
+    strictEqual(result, "You are a real agent.");
+  });
 });

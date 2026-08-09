@@ -438,4 +438,173 @@ describe("server", () => {
       strictEqual(output.system[0], personaText, "persona text should be unchanged");
     });
   });
+
+  // ── Task 1 (ADR-002 + ADR-004): identity gate + race fix ──
+
+  describe("experimental.chat.system.transform identity gate + race fix", () => {
+    it("should NOT initialize when input.agent is a hidden native agent (title)", async () => {
+      let initCallCount = 0;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+        initCallCount++;
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Register the real session agent
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // Hidden native title-gen call reuses the session's sessionID
+      await (hooks as any)["experimental.chat.system.transform"](
+        { sessionID: "sess-1", agent: "title" } as any,
+        { system: ["You are a title generator. You output ONLY a thread title."] }
+      );
+
+      strictEqual(initCallCount, 0, "title-gen call must NOT initialize the session");
+    });
+
+    it("should NOT initialize when input.agent does not match the session's tracked agent", async () => {
+      let initCallCount = 0;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+        initCallCount++;
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Register the real session agent
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // A different agent's call must be skipped — no claim, no init
+      await (hooks as any)["experimental.chat.system.transform"](
+        { sessionID: "sess-1", agent: "other-agent" } as any,
+        { system: ["You are another agent."] }
+      );
+
+      strictEqual(initCallCount, 0, "mismatched agent call must NOT initialize the session");
+    });
+
+    it("should initialize when input.agent matches the session's tracked agent", async () => {
+      let initCallCount = 0;
+      let initAgent: string | undefined;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function (agent: string) {
+        initCallCount++;
+        initAgent = agent;
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Register the real session agent
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      await (hooks as any)["experimental.chat.system.transform"](
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { system: ["You are a test agent. Do good things."] }
+      );
+
+      strictEqual(initCallCount, 1, "matching agent call should initialize");
+      strictEqual(initAgent, "test-agent");
+    });
+
+    it("should fall through to marker filter when input.agent is absent (old host)", async () => {
+      let initCallCount = 0;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+        initCallCount++;
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Register the real session agent
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // Old host: no agent in input — falls through to persona extraction.
+      // A native title prompt must be filtered out (marker filter), so no init.
+      await (hooks as any)["experimental.chat.system.transform"](
+        { sessionID: "sess-1" } as any,
+        { system: ["You are a title generator. You output ONLY a thread title."] }
+      );
+
+      strictEqual(initCallCount, 0, "old host title prompt must be dropped by marker filter");
+    });
+
+    it("should initialize exactly once when two system.transform calls are concurrent", async () => {
+      let initCallCount = 0;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+        initCallCount++;
+        // Simulate async init so both calls overlap before either completes
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Register the real session agent
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // Fire both concurrently — race between title-gen and real call
+      await Promise.all([
+        (hooks as any)["experimental.chat.system.transform"](
+          { sessionID: "sess-1", agent: "test-agent" } as any,
+          { system: ["You are a test agent. Do good things."] }
+        ),
+        (hooks as any)["experimental.chat.system.transform"](
+          { sessionID: "sess-1", agent: "test-agent" } as any,
+          { system: ["You are a test agent. Do good things."] }
+        ),
+      ]);
+
+      strictEqual(initCallCount, 1, "concurrent calls must initialize exactly once");
+    });
+
+    it("should delete the claim when initializeSession rejects so a later call retries", async () => {
+      let initCallCount = 0;
+
+      AgentPersonaCoachPlugin.prototype.initializeSession = async function () {
+        initCallCount++;
+        if (initCallCount === 1) {
+          throw new Error("Simulated init failure");
+        }
+      };
+
+      const hooks = await server(aMockPluginInput() as any);
+
+      // Register the real session agent
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // First call fails — must not throw to the caller
+      await (hooks as any)["experimental.chat.system.transform"](
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { system: ["You are a test agent. Do good things."] }
+      );
+      strictEqual(initCallCount, 1, "first call attempted init");
+
+      // Claim must have been deleted — a subsequent call retries
+      await (hooks as any)["experimental.chat.system.transform"](
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { system: ["You are a test agent. Do good things."] }
+      );
+
+      strictEqual(initCallCount, 2, "failed init must be retried on the next call");
+    });
+  });
 });
