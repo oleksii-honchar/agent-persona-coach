@@ -5,6 +5,7 @@ import { CoachQuestionsCache } from "./cache.js";
 import { CoachGenerator, extractJsonFromMarkdown } from "./generator.js";
 import { CoachStateManager } from "./state.js";
 import { formatNudge } from "./injector.js";
+import { TraversalNudgeEngine } from "./traversal.js";
 import { log } from "./logger.js";
 
 /**
@@ -24,6 +25,7 @@ export class AgentPersonaCoachPlugin {
   private cache: CoachQuestionsCache;
   private generator: CoachGenerator;
   private stateManager: CoachStateManager;
+  private traversalEngine: TraversalNudgeEngine;
   private agentPersonas = new Map<string, string>();
 
   constructor(config: DeepPartial<PluginConfig> = {}) {
@@ -31,6 +33,7 @@ export class AgentPersonaCoachPlugin {
     this.cache = new CoachQuestionsCache();
     this.generator = new CoachGenerator(this);
     this.stateManager = new CoachStateManager(this.config);
+    this.traversalEngine = new TraversalNudgeEngine(this.config.categories.traversal);
   }
 
   // ---- ChatClient interface (used by generator) ----
@@ -99,7 +102,7 @@ export class AgentPersonaCoachPlugin {
   onToolAfter(
     sessionId: string,
     toolName: string,
-    _toolArgs: unknown,
+    toolArgs: unknown,
     agentName: string,
     agentInfo: Record<string, unknown>
   ): string[] {
@@ -132,7 +135,19 @@ export class AgentPersonaCoachPlugin {
       }
     }
 
+    // Traversal-nudge mode (C3, ADR-0009): deterministic observation after the
+    // existing category nudges. Returns [] unless the traversal cadence holds;
+    // makes no LLM calls (AD-7).
+    nudges.push(...this.traversalEngine.observeTool(sessionId, toolName, toolArgs));
+
     return nudges;
+  }
+
+  /**
+   * Reset traversal state for a session (new task boundary — `chat.message`).
+   */
+  resetTraversal(sessionId: string): void {
+    this.traversalEngine.reset(sessionId);
   }
 
   // ---- Private helpers ----
@@ -181,10 +196,12 @@ export class AgentPersonaCoachPlugin {
    */
   clearSession(sessionId: string): void {
     this.stateManager.clear(sessionId);
+    this.traversalEngine.clear(sessionId);
   }
 }
 
 export { CoachQuestionsCache, CoachGenerator, extractJsonFromMarkdown, CoachStateManager };
+export { TraversalNudgeEngine } from "./traversal.js";
 export { formatNudge } from "./injector.js";
 export { extractPersona } from "./types.js";
 export type {

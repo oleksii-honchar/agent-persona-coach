@@ -99,6 +99,10 @@ export async function createServerHooks(
         pendingUserMessageIdentity.set(sessionID, true);
         log.info(`Identity nudge queued for session ${sessionID}`);
       }
+
+      // Reset the traversal engine — a new user message is a new task
+      // boundary: the previous node anchor must not carry over (spec C3 / AD-8).
+      plugin.resetTraversal?.(sessionID);
     },
 
    /**

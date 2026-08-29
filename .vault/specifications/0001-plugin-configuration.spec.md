@@ -4,17 +4,20 @@ title: "Plugin Configuration Schema"
 kind: feature
 status: active
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-12T14:20:00Z"
+updatedAt: "2026-08-29T20:21:00Z"
 tags: [configuration, schema, plugin]
 owner: ""
 see_also:
   - "concepts/0002-reflection-categories.concept.md"
+  - "concepts/0005-traversal-nudge-mode.concept.md"
   - "memories/0002-config-defaults-discrepancy.memory.md"
+  - "memories/0009-substring-detection-gotcha.memory.md"
   - "adrs/0003-per-user-message-identity-nudge.adr.md"
   - "adrs/0006-config-driven-prompts.adr.md"
   - "adrs/0007-deep-merge-config-overrides.adr.md"
   - "adrs/0008-restore-system-transform-init.adr.md"
   - "adrs/0009-move-rules-nudge-to-ontoolafter.adr.md"
+  - "adrs/0010-traversal-nudge.adr.md"
 deprecated:
   date: null
   reason: null
@@ -43,6 +46,11 @@ Document the complete configuration schema for the Agent Persona Coach plugin, i
 - [x] `categories.references.cadence` — Inject reference check once after N tool calls
 - [x] `categories.progress.enabled` — Enable progress check nudges
 - [x] `categories.progress.cadence` — Inject progress check every N tool calls
+- [x] `categories.traversal.enabled` — Enable Traversal-Nudge mode (deterministic, opt-in)
+- [x] `categories.traversal.toolPatterns` — Substring patterns identifying traversal tool calls
+- [x] `categories.traversal.nudgeAfter`, `.recurrentEvery`, `.maxRepeats` — Traversal nudge cadence and cap
+- [x] `categories.traversal.historyDepth`, `.backtrackAfter` — Backtrack detection and suggestions
+- [x] `categories.traversal.wording`, `.stuckWording` — Progress and backtrack templates (`{node}` placeholder)
 - [x] `coachPrompt` — The LLM prompt template for generating reflection questions (moved from hard-coded `COACH_PROMPT` in `prompt.ts` to config)
 
 ## Behaviors
@@ -79,6 +87,16 @@ Document the complete configuration schema for the Agent Persona Coach plugin, i
 - If `categories.identity.enabled: false`, the per-user-message injection is also disabled
 - The flag is consumed (deleted) on first check in `system.transform` to prevent duplicate injection
 
+**Traversal-Nudge mode (deterministic, zero LLM):**
+- Drives `TraversalNudgeEngine` (`src/traversal.ts`) via `categories.traversal`; when `enabled: false` (default) the engine returns no nudges.
+- **Detection:** a tool call is a traversal call when its name — or the `meta_use`-wrapped `args.name` — substring-matches a `toolPatterns` entry (`getPersonaEntryNode`, `expandFileRelations`, `fetchFile`, `getPersonaStatus`).
+- **Anchoring:** a traversal call anchors the current node (id from `file_id`/`node_id` args, fallback to tool name) and resets nudge counters.
+- **Cadence:** non-traversal calls accrue; first "Traversal Check" fires after `nudgeAfter`, re-fires every `recurrentEvery`, capped at `maxRepeats` per anchor.
+- **Advancement vs cycling:** anchoring a *different* node (forward or backward) resets `cycleCount`; re-anchoring the *same* node increments it. At `backtrackAfter` a "Backtrack Check" nudge fires, suggesting an ancestor re-expansion or re-entry via `getPersonaEntryNode`.
+- **Pause nodes:** a non-empty `veto` in a `fetchFile` result classifies the anchor as `pause` — the nudge waits for the user's answer instead of forward pressure.
+- **Reset:** a new `chat.message` resets traversal state (new task boundary).
+- **Delivery:** the engine returns nudges from `observeTool(...)` inside `onToolAfter`, which are formatted via `formatTraversalNudge`/`formatBacktrackNudge` (`src/injector.ts`) and injected via `output.inject` — no LLM call (test: `mockClient.calls.length === 0`).
+
 **Configuration merging:**
 - User config is deep-merged with `DEFAULT_CONFIG` via `deepMerge(DEFAULT_CONFIG, userConfig)` in the plugin constructor
 - Objects are merged recursively; arrays and primitives are replaced; `undefined` values are skipped
@@ -105,6 +123,15 @@ Document the complete configuration schema for the Agent Persona Coach plugin, i
 | `categories.references.cadence` | `number` | `30` | Inject reference check once after N tool calls |
 | `categories.progress.enabled` | `boolean` | `true` | Enable progress check nudges |
 | `categories.progress.cadence` | `number` | `20` | Inject progress check every N tool calls |
+| `categories.traversal.enabled` | `boolean` | `false` | Enable Traversal-Nudge mode (deterministic, opt-in; see [[adrs/0010-traversal-nudge.adr.md]]) |
+| `categories.traversal.toolPatterns` | `string[]` | `["getPersonaEntryNode","expandFileRelations","fetchFile","getPersonaStatus"]` | Substring patterns identifying traversal tool calls (covers `bensyne_*` and `meta_use`-wrapped names) |
+| `categories.traversal.nudgeAfter` | `number` | `8` | First traversal nudge after N non-traversal calls |
+| `categories.traversal.recurrentEvery` | `number` | `8` | Re-nudge every N non-traversal calls after the first |
+| `categories.traversal.maxRepeats` | `number` | `3` | Cap on nudges per anchor |
+| `categories.traversal.historyDepth` | `number` | `5` | Path history size used in backtrack suggestions |
+| `categories.traversal.backtrackAfter` | `number` | `3` | Same-node re-anchors before a backtrack nudge fires |
+| `categories.traversal.wording` | `string` | `[see Default]` | Progress nudge template; must contain `{node}` placeholder |
+| `categories.traversal.stuckWording` | `string` | `[see Default]` | Backtrack nudge template; must contain `{node}` placeholder |
 | `coachPrompt` | `string` | `[full COACH_PROMPT text]` | The LLM prompt template for generating reflection questions; must contain `{personaText}` placeholder |
 
 ## Permission Reference

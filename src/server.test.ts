@@ -439,6 +439,174 @@ describe("server", () => {
     });
   });
 
+  // ── Task 4 (C5+C6): traversal nudge delivery via output.inject (ADR-0004) ──
+
+  describe("tool.execute.after — traversal nudge delivery (C5/C6)", () => {
+    /**
+     * Plugin with all generative categories disabled and traversal enabled
+     * via deepMerge override (keeps DEFAULT traversal toolPatterns/etc),
+     * wired through createServerHooks exactly like production.
+     */
+    function traversalHooks() {
+      const plugin = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3 },
+        },
+      });
+      return createServerHooks(plugin, aMockPluginInput() as any);
+    }
+
+    function aToolOutput() {
+      return { title: "", output: "", metadata: {} } as any;
+    }
+
+    it("should inject the traversal nudge into output.inject as a synthetic user message", async () => {
+      const hooks = await traversalHooks();
+
+      // Register the agent for the session
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // Traversal anchor call — no nudge yet
+      const anchored = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "bensyne_expandFileRelations", sessionID: "sess-1", callID: "c1", args: { file_id: "file_a" } } as any,
+        anchored
+      );
+      strictEqual(anchored.inject, undefined, "anchor call must not inject a nudge");
+
+      // Non-traversal call #1 — still below nudgeAfter (2)
+      const silent = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c2", args: {} } as any,
+        silent
+      );
+      strictEqual(silent.inject, undefined, "no inject before nudgeAfter non-traversal calls");
+
+      // Non-traversal call #2 — cadence reached → traversal nudge delivered
+      const nudged = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c3", args: {} } as any,
+        nudged
+      );
+
+      ok(nudged.inject && nudged.inject.length >= 1, "output.inject should contain the traversal nudge");
+      ok(
+        nudged.inject.some(
+          (n: { role: string; text: string }) =>
+            n.role === "user" && n.text.includes("<system-reminder>") && n.text.includes("Traversal Check")
+        ),
+        "output.inject should merge the traversal <system-reminder> as a synthetic user message"
+      );
+    });
+
+    it("should stop injecting traversal nudges after a traversal call advances the anchor", async () => {
+      const hooks = await traversalHooks();
+
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      await hooks["tool.execute.after"]!(
+        { tool: "bensyne_expandFileRelations", sessionID: "sess-1", callID: "c1", args: { file_id: "file_a" } } as any,
+        aToolOutput()
+      );
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c2", args: {} } as any,
+        aToolOutput()
+      );
+      const nudged = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c3", args: {} } as any,
+        nudged
+      );
+      ok(
+        nudged.inject && nudged.inject.some((n: { text: string }) => n.text.includes("Traversal Check")),
+        "traversal nudge fires at cadence"
+      );
+
+      // Anchor advances to a different node (forward/backward) — streak resets
+      await hooks["tool.execute.after"]!(
+        { tool: "bensyne_expandFileRelations", sessionID: "sess-1", callID: "c4", args: { file_id: "file_b" } } as any,
+        aToolOutput()
+      );
+      const after = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c5", args: {} } as any,
+        after
+      );
+      strictEqual(after.inject, undefined, "no nudge right after the anchor advances");
+    });
+
+    it("should reset the traversal anchor on a new user message (chat.message — new task boundary, spec C3 / AD-8)", async () => {
+      const hooks = await traversalHooks();
+
+      // User message 1 registers the agent for the session.
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      // Traversal anchor call — no nudge on the anchor itself.
+      await hooks["tool.execute.after"]!(
+        { tool: "bensyne_expandFileRelations", sessionID: "sess-1", callID: "c1", args: { file_id: "file_a" } } as any,
+        aToolOutput()
+      );
+
+      // Non-traversal calls up to cadence (nudgeAfter: 2) → nudge fires.
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c2", args: {} } as any,
+        aToolOutput()
+      );
+      const nudged = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c3", args: {} } as any,
+        nudged
+      );
+      ok(
+        nudged.inject && nudged.inject.some((n: { text: string }) => n.text.includes("Traversal Check")),
+        "traversal nudge should fire at cadence before the new user message"
+      );
+
+      // New user message — resets the traversal engine (new task boundary).
+      await hooks["chat.message"]!(
+        { sessionID: "sess-1", agent: "test-agent" } as any,
+        { message: "after reset", parts: [] }
+      );
+
+      // Without a NEW traversal anchor, non-traversal calls must stay silent —
+      // the reset cleared the anchor state.
+      const silent1 = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c4", args: {} } as any,
+        silent1
+      );
+      const silent2 = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-1", callID: "c5", args: {} } as any,
+        silent2
+      );
+      strictEqual(silent1.inject, undefined, "no nudge after reset before a new traversal anchor");
+      strictEqual(silent2.inject, undefined, "no nudge after reset even at the old cadence count");
+    });
+
+    it("should add no new hooks (only chat.message, tool.execute.after, experimental.chat.system.transform)", async () => {
+      const hooks = await traversalHooks();
+      deepStrictEqual(
+        Object.keys(hooks).sort(),
+        ["chat.message", "experimental.chat.system.transform", "tool.execute.after"].sort(),
+        "hooks object must expose exactly the existing hook keys"
+      );
+    });
+  });
+
   // ── Task 1 (ADR-002 + ADR-004): identity gate + race fix ──
 
   describe("experimental.chat.system.transform identity gate + race fix", () => {

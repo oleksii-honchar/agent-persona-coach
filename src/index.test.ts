@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from "node:test";
 import { strictEqual, ok, deepStrictEqual, notStrictEqual } from "node:assert/strict";
-import { AgentPersonaCoachPlugin } from "./index.js";
+import { AgentPersonaCoachPlugin, TraversalNudgeEngine } from "./index.js";
 import { DEFAULT_CONFIG, deepMerge } from "./types.js";
 import { aMockChatClient } from "./test-utils.js";
 
@@ -200,6 +200,121 @@ describe("AgentPersonaCoachPlugin", () => {
 
       ok(result.length > 0, "Identity check should trigger again after clear");
       ok(result[0].includes("Identity Check"));
+    });
+  });
+
+  describe("onToolAfter — traversal integration (C3)", () => {
+    /**
+     * Plugin with all generative categories disabled and traversal enabled
+     * via deepMerge override (keeps DEFAULT traversal toolPatterns/etc).
+     */
+    function traversalPlugin(): AgentPersonaCoachPlugin {
+      return new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3 },
+        },
+      });
+    }
+
+    it("should return a traversal nudge ONLY after nudgeAfter non-traversal calls", () => {
+      const p = traversalPlugin();
+      p.setChatClient(mockClient);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+
+      const res1 = p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      strictEqual(res1.some((n) => n.includes("Traversal Check")), false, "no traversal nudge before nudgeAfter");
+
+      const res2 = p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      ok(res2.some((n) => n.includes("Traversal Check")), "traversal nudge fires after nudgeAfter non-traversal calls");
+    });
+
+    it("should STOP returning traversal nudges after a traversal call advances the anchor", () => {
+      const p = traversalPlugin();
+      p.setChatClient(mockClient);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}); // non-traversal 1
+      ok(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")), "nudge at cadence");
+
+      // Traversal call re-anchors to a different node — streak resets
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_b" }, AGENT_NAME, {});
+      const after = p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      strictEqual(after.some((n) => n.includes("Traversal Check")), false, "no nudge right after anchor advance");
+    });
+
+    it("resetTraversal should clear traversal state (new task boundary)", () => {
+      const p = traversalPlugin();
+      p.setChatClient(mockClient);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      ok(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")));
+
+      p.resetTraversal(SESSION_ID);
+
+      // State cleared — non-traversal calls no longer nudge (no anchor)
+      strictEqual(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")), false);
+      strictEqual(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")), false);
+    });
+
+    it("clearSession should clear traversal state", () => {
+      const p = traversalPlugin();
+      p.setChatClient(mockClient);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      ok(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")));
+
+      p.clearSession(SESSION_ID);
+
+      strictEqual(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")), false);
+    });
+
+    it("should append traversal nudges to existing category nudges (no regression)", async () => {
+      const p = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: true, cadence: 3 },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3 },
+        },
+      });
+      p.setChatClient(mockClient);
+      await p.initializeSession(AGENT_NAME, AGENT_INFO_V1);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, AGENT_INFO_V1); // call 1
+      p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1); // call 2, traversal streak 1
+      const res = p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, AGENT_INFO_V1); // call 3 + traversal streak 2
+
+      ok(res.some((n) => n.includes("Identity Check")), "existing identity nudge still fires (cadence 3)");
+      ok(res.some((n) => n.includes("Traversal Check")), "traversal nudge joins the same array");
+    });
+
+    it("should make zero LLM calls in traversal-only flows", () => {
+      const p = traversalPlugin();
+      const traversalMock = aMockChatClient(VALID_JSON_RESPONSE);
+      p.setChatClient(traversalMock);
+
+      // No initializeSession — pure traversal observation + nudging
+      p.onToolAfter(SESSION_ID, "bensyne_getPersonaEntryNode", { memory_bank: "persona_worker" }, AGENT_NAME, {});
+      p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      ok(p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {}).some((n) => n.includes("Traversal Check")));
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_b" }, AGENT_NAME, {});
+      p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+
+      strictEqual(traversalMock.calls.length, 0, "traversal mode must never trigger generation");
+    });
+  });
+
+  describe("exports", () => {
+    it("should export TraversalNudgeEngine for the server and tests", () => {
+      strictEqual(typeof TraversalNudgeEngine, "function", "TraversalNudgeEngine should be exported from index");
     });
   });
 

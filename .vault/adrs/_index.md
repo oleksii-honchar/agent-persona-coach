@@ -17,3 +17,4 @@ Architecture decisions for the agent-persona-coach plugin.
 - [[0007-deep-merge-config-overrides.adr.md]] — Deep Merge for Nested Config Overrides: custom deepMerge utility
 - [[0008-restore-system-transform-init.adr.md]] — Restore system.transform for persona extraction only (supersedes ADR-0005)
 - [[0009-move-rules-nudge-to-ontoolafter.adr.md]] — Move rules nudge from onToolBefore to onToolAfter (resolves memory-0005)
+- [[0010-traversal-nudge.adr.md]] — Traversal-Nudge Mode: deterministic, zero-LLM state machine (anchoring, backtracking, pause nodes)

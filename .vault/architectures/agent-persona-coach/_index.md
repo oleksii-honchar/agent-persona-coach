@@ -4,7 +4,7 @@ title: "Agent Persona Coach — System Context"
 c4_level: system_context
 system: agent-persona-coach
 createdAt: "2026-06-10T10:00:00Z"
-updatedAt: "2026-06-11T17:55:00+02:00"
+updatedAt: "2026-08-29T20:21:00Z"
 tags: [plugin, c4, system-context]
 see_also:
   - "adrs/0001-plugin-design-decisions.adr.md"
@@ -12,6 +12,8 @@ see_also:
   - "adrs/0005-move-lazy-init-to-chat-message.adr.md"
   - "concepts/0004-prompt-caching-sensitivity.concept.md"
   - "concepts/0001-persona-drift.concept.md"
+  - "adrs/0010-traversal-nudge.adr.md"
+  - "concepts/0005-traversal-nudge-mode.concept.md"
 linked_elements: []
 deprecated:
   date: null
@@ -49,4 +51,4 @@ C4Context
 
 ## Notes
 
-The plugin integrates with better-opencode via 3 hooks: `chat.message` (session init), `tool.execute.before` (rule compliance), and `tool.execute.after` (cadence nudges). The LLM is only called once per unique agent persona (cached), making it a low-cost dependency. Nudges are delivered exclusively via `output.inject` (synthetic user messages) — the `system.transform` path was removed to preserve Anthropic's prompt cache per [[adrs/0004-remove-system-prompt-injection.adr.md]].
+The plugin integrates with better-opencode via 3 hooks: `chat.message` (session init + traversal reset), `tool.execute.before` (rule compliance), and `tool.execute.after` (cadence nudges + traversal observation). The LLM is only called once per unique agent persona (cached), making it a low-cost dependency. Nudges are delivered exclusively via `output.inject` (synthetic user messages) — the `system.transform` path was removed to preserve Anthropic's prompt cache per [[adrs/0004-remove-system-prompt-injection.adr.md]]. Since ADR-0009 the rules nudge also flows through `tool.execute.after`; ADR-0010 adds an opt-in deterministic `TraversalNudgeEngine` fed from `onToolAfter`.

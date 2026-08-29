@@ -12,3 +12,4 @@ Domain knowledge for the agent-persona-coach plugin.
 - [[0002-reflection-categories.concept.md]] — The 4 reflection categories (identity, rules, references, progress) and their cadences
 - [[0003-system-reminder-injection.concept.md]] — How `<system-reminder>` blocks are formatted and injected via output.inject
 - [[0004-prompt-caching-sensitivity.concept.md]] — How LLM prompt caching works and which plugin hooks affect it
+- [[0005-traversal-nudge-mode.concept.md]] — Deterministic, zero-LLM traversal nudges (anchoring, advancement, pause nodes)

@@ -16,3 +16,4 @@ Gotchas and lessons learned from working with agent-persona-coach.
 - [[0006-critical-permissions-discrepancy.memory.md]] — CriticalPermissions defaults: README vs code (now RESOLVED)
 - [[0007-deep-merge-array-replacement-permissions.memory.md]] — Deep merge replaces criticalPermissions array (not merged)
 - [[0008-lastnudges-not-cleared.memory.md]] — lastNudges Map never cleared after injection (stale from ADR-0004 removal)
+- [[0009-substring-detection-gotcha.memory.md]] — Traversal tool detection is substring-based on toolPatterns; no tool-catalog guard

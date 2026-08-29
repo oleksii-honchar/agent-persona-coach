@@ -34,6 +34,17 @@ export interface PluginConfig {
     rules: { enabled: boolean; cadence: number; criticalPermissions: string[]; criticalTools: string[] };
     references: { enabled: boolean; cadence: number };
     progress: { enabled: boolean; cadence: number };
+    traversal: {
+      enabled: boolean;
+      toolPatterns: string[]; // substring match on tool name
+      nudgeAfter: number; // first nudge after N non-traversal calls
+      recurrentEvery: number; // re-nudge every N calls after first
+      maxRepeats: number; // cap per anchor
+      historyDepth: number; // path history size for backtrack suggestions
+      backtrackAfter: number; // same-node re-anchors before a backtrack nudge fires
+      wording: string; // progress template with {node}
+      stuckWording: string; // backtrack template with {node}
+    };
   };
 }
 
@@ -107,6 +118,19 @@ export const DEFAULT_CONFIG: PluginConfig = {
     rules: { enabled: true, cadence: 10, criticalPermissions: ["bash", "edit", "task"], criticalTools: [] },
     references: { enabled: true, cadence: 30 },
     progress: { enabled: true, cadence: 20 },
+    traversal: {
+      enabled: false,
+      toolPatterns: ["getPersonaEntryNode", "expandFileRelations", "fetchFile", "getPersonaStatus"],
+      nudgeAfter: 8,
+      recurrentEvery: 8,
+      maxRepeats: 3,
+      historyDepth: 5,
+      backtrackAfter: 3,
+      wording:
+        "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile).",
+      stuckWording:
+        "You keep re-anchoring on node {node} without progress. You may be stuck in this branch — jump back a few steps (re-expand an ancestor node's edges, or re-enter via getPersonaEntryNode) and try another branch.",
+    },
   },
 };
 

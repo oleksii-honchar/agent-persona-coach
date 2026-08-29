@@ -75,6 +75,46 @@ describe("DEFAULT_CONFIG", () => {
     strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 20);
   });
 
+  it("should have traversal with all 9 fields", () => {
+    deepStrictEqual(
+      Object.keys(DEFAULT_CONFIG.categories.traversal).sort(),
+      [
+        "backtrackAfter",
+        "enabled",
+        "historyDepth",
+        "maxRepeats",
+        "nudgeAfter",
+        "recurrentEvery",
+        "stuckWording",
+        "toolPatterns",
+        "wording",
+      ],
+    );
+  });
+
+  it("should have traversal disabled with exact defaults", () => {
+    strictEqual(DEFAULT_CONFIG.categories.traversal.enabled, false);
+    deepStrictEqual(DEFAULT_CONFIG.categories.traversal.toolPatterns, [
+      "getPersonaEntryNode",
+      "expandFileRelations",
+      "fetchFile",
+      "getPersonaStatus",
+    ]);
+    strictEqual(DEFAULT_CONFIG.categories.traversal.nudgeAfter, 8);
+    strictEqual(DEFAULT_CONFIG.categories.traversal.recurrentEvery, 8);
+    strictEqual(DEFAULT_CONFIG.categories.traversal.maxRepeats, 3);
+    strictEqual(DEFAULT_CONFIG.categories.traversal.historyDepth, 5);
+    strictEqual(DEFAULT_CONFIG.categories.traversal.backtrackAfter, 3);
+    strictEqual(
+      DEFAULT_CONFIG.categories.traversal.wording,
+      "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile).",
+    );
+    strictEqual(
+      DEFAULT_CONFIG.categories.traversal.stuckWording,
+      "You keep re-anchoring on node {node} without progress. You may be stuck in this branch — jump back a few steps (re-expand an ancestor node's edges, or re-enter via getPersonaEntryNode) and try another branch.",
+    );
+  });
+
   it("should have coachPrompt as a non-empty string with key phrases", () => {
     strictEqual(typeof DEFAULT_CONFIG.coachPrompt, "string");
     notStrictEqual(DEFAULT_CONFIG.coachPrompt, "");
@@ -179,6 +219,34 @@ describe("deepMerge", () => {
     const result = deepMerge(target, source);
     strictEqual(result.a, 99); // merged correctly
     strictEqual(target.a, 1);  // original unchanged
+  });
+
+  it("should preserve traversal defaults on partial override (only enabled changed)", () => {
+    const result = deepMerge(DEFAULT_CONFIG, {
+      categories: { traversal: { enabled: true } },
+    });
+    // enabled overridden
+    strictEqual(result.categories.traversal.enabled, true);
+    // all other traversal defaults preserved
+    deepStrictEqual(result.categories.traversal.toolPatterns, [
+      "getPersonaEntryNode",
+      "expandFileRelations",
+      "fetchFile",
+      "getPersonaStatus",
+    ]);
+    strictEqual(result.categories.traversal.nudgeAfter, 8);
+    strictEqual(result.categories.traversal.recurrentEvery, 8);
+    strictEqual(result.categories.traversal.maxRepeats, 3);
+    strictEqual(result.categories.traversal.historyDepth, 5);
+    strictEqual(result.categories.traversal.backtrackAfter, 3);
+    strictEqual(
+      result.categories.traversal.wording,
+      "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile).",
+    );
+    strictEqual(
+      result.categories.traversal.stuckWording,
+      "You keep re-anchoring on node {node} without progress. You may be stuck in this branch — jump back a few steps (re-expand an ancestor node's edges, or re-enter via getPersonaEntryNode) and try another branch.",
+    );
   });
 });
 
