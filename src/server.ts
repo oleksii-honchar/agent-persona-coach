@@ -1,6 +1,7 @@
 import { AgentPersonaCoachPlugin } from "./index.js";
 import { ProviderChatClient } from "./provider-client.js";
 import { extractPersonaFromSystem } from "./types.js";
+import type { DeepPartial, PluginConfig } from "./types.js";
 
 import { log } from "./logger.js";
 
@@ -198,9 +199,14 @@ export async function createServerHooks(
  */
 const server: Plugin = async function server(
   pluginInput: PluginInput,
-  _options?: PluginOptions
+  options?: PluginOptions
 ): Promise<Hooks> {
-  const plugin = new AgentPersonaCoachPlugin();
+  // Pass the opencode.jsonc plugin block (enabled/categories/traversal) through
+  // to the constructor — deepMerge into DEFAULT_CONFIG makes it take effect
+  // (better-opencode passes load.options to server(input, options)).
+  const plugin = new AgentPersonaCoachPlugin(
+    (options ?? {}) as DeepPartial<PluginConfig>
+  );
 
   // Wire the ProviderChatClient so the generator can call the LLM
   const chatClient = new ProviderChatClient(pluginInput.client);
