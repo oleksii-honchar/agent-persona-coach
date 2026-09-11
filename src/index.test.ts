@@ -3,6 +3,7 @@ import { strictEqual, ok, deepStrictEqual, notStrictEqual } from "node:assert/st
 import { AgentPersonaCoachPlugin, TraversalNudgeEngine } from "./index.js";
 import { DEFAULT_CONFIG, deepMerge } from "./types.js";
 import { aMockChatClient } from "./test-utils.js";
+import { readFileSync } from "node:fs";
 
 const VALID_JSON_RESPONSE = JSON.stringify({
   identity: ["Who am I in my role?", "Am I staying in my lane?"],
@@ -103,8 +104,11 @@ describe("AgentPersonaCoachPlugin", () => {
       await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
     });
 
-    it("should not have onToolBefore method (moved to onToolAfter)", () => {
-      strictEqual(typeof (plugin as any).onToolBefore, "undefined", "onToolBefore should not exist on plugin");
+    it("should expose onToolBefore (Task 6 hard gate) returning null when the gate is off", () => {
+      // DEFAULT_CONFIG: traversal.enabled=false and hardGate.enabled=false →
+      // always null, never throws, never blocks.
+      strictEqual(plugin.onToolBefore(SESSION_ID, "read", {}), null);
+      strictEqual(plugin.onToolBefore(SESSION_ID, "bash", { command: "ls" }), null);
     });
 
     it("should not trigger rules nudge when tool is not in criticalPermissions (DEFAULT_CONFIG)", () => {
@@ -247,8 +251,16 @@ describe("AgentPersonaCoachPlugin", () => {
       strictEqual(after.some((n) => n.includes("Traversal Check")), false, "no nudge right after anchor advance");
     });
 
-    it("resetTraversal should clear traversal state (new task boundary)", () => {
-      const p = traversalPlugin();
+    it("resetTraversal with onUserMessage:\"reset\" clears traversal state (escape hatch, AD-8)", () => {
+      const p = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3, onUserMessage: "reset" },
+        },
+      });
       p.setChatClient(mockClient);
 
       p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
@@ -309,6 +321,156 @@ describe("AgentPersonaCoachPlugin", () => {
       p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
 
       strictEqual(traversalMock.calls.length, 0, "traversal mode must never trigger generation");
+    });
+  });
+
+  // ── Task 6 (spec §3 + §6 wiring): bootstrap dispatch, before-hook delegate, resetTraversal routing ──
+
+  describe("onToolBefore — hard-gate delegate (Task 6, spec §6)", () => {
+    const GATE_WORDING = "BLOCKED — realign with the tree now.";
+
+    /** Plugin with traversal enabled + hardGate enabled; anchor + realign window helper. */
+    function gatePlugin(): AgentPersonaCoachPlugin {
+      return new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: {
+            enabled: true,
+            nudgeAfter: 2,
+            recurrentEvery: 2,
+            maxRepeats: 3,
+            hardGate: { enabled: true, wording: GATE_WORDING },
+          },
+        },
+      });
+    }
+
+    /** Anchor a session then open the realignment window via resetTraversal (default realign). */
+    function anchoredPending(p: AgentPersonaCoachPlugin, sessionId = SESSION_ID): void {
+      p.onToolAfter(sessionId, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      p.resetTraversal(sessionId); // default onUserMessage:"realign" → realign, not reset
+    }
+
+    it("returns null for an un-anchored session (never blocks outside a realignment window)", () => {
+      const p = gatePlugin();
+      p.setChatClient(mockClient);
+      strictEqual(p.onToolBefore("fresh", "read", { path: "/tmp/a" }), null);
+      strictEqual(p.onToolBefore("fresh", "bash", { command: "ls" }), null);
+    });
+
+    it("returns null for traversal tools during a pending realignment (allows)", () => {
+      const p = gatePlugin();
+      p.setChatClient(mockClient);
+      anchoredPending(p);
+      strictEqual(p.onToolBefore(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_b" }), null);
+      strictEqual(p.onToolBefore(SESSION_ID, "bensyne_fetchFile", { file_id: "file_b" }), null);
+      strictEqual(
+        p.onToolBefore(SESSION_ID, "meta_use", {
+          name: "bensyne_getPersonaEntryNode",
+          args: { memory_bank: "agent-persona_worker" },
+        }),
+        null
+      );
+    });
+
+    it("returns the hard-gate message (not a throw) for any other tool during a pending realignment", () => {
+      const p = gatePlugin();
+      p.setChatClient(mockClient);
+      anchoredPending(p);
+      const msg = p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" });
+      ok(typeof msg === "string" && msg.includes("Hard Gate"), "returns the hard-gate message, never throws");
+      ok(msg?.includes(GATE_WORDING), "message contains the configured gate wording");
+
+      strictEqual(p.onToolBefore(SESSION_ID, "bash", { command: "ls" }), msg);
+    });
+
+    it("returns null again after the agent re-affirms via a traversal tool (window closes)", () => {
+      const p = gatePlugin();
+      p.setChatClient(mockClient);
+      anchoredPending(p);
+
+      // Window open → blocked.
+      ok(typeof p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" }) === "string", "blocked while window open");
+
+      // Re-affirmation consumes the window (observe traversal tool).
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      strictEqual(p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" }), null, "window closed after re-affirmation");
+    });
+  });
+
+  describe("resetTraversal routing + hasTraversalAnchor (Task 6 / ADR-0011)", () => {
+    it("resetTraversal with onUserMessage:\"realign\" (default) keeps the anchor — first non-traversal call gets an immediate realign nudge", () => {
+      // Same config as the traversalPlugin helper above (default onUserMessage:"realign").
+      const p = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3 },
+        },
+      });
+      p.setChatClient(mockClient);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      p.resetTraversal(SESSION_ID); // routes to engine.realign (anchor preserved)
+
+      ok(p.hasTraversalAnchor(SESSION_ID), "anchor is preserved after realign dispatch");
+      const res = p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      ok(res.some((n) => n.includes("Realign Check")), "first non-traversal call fires an immediate realign nudge");
+    });
+
+    it("resetTraversal with onUserMessage:\"reset\" wipes the anchor (escape hatch)", () => {
+      const p = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3, onUserMessage: "reset" },
+        },
+      });
+      p.setChatClient(mockClient);
+
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      ok(p.hasTraversalAnchor(SESSION_ID), "anchored before reset");
+      p.resetTraversal(SESSION_ID); // routes to engine.reset (wipe)
+
+      strictEqual(p.hasTraversalAnchor(SESSION_ID), false, "anchor is wiped after reset dispatch");
+      const res = p.onToolAfter(SESSION_ID, "read", {}, AGENT_NAME, {});
+      strictEqual(res.some((n) => n.includes("Traversal Check")), false, "no traversal nudge after reset");
+    });
+
+    it("hasTraversalAnchor reflects engine anchor state (bootstrap-queue signal)", () => {
+      // Same config as the traversalPlugin helper above.
+      const p = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2, recurrentEvery: 2, maxRepeats: 3 },
+        },
+      });
+      p.setChatClient(mockClient);
+      strictEqual(p.hasTraversalAnchor(SESSION_ID), false, "fresh session is un-anchored");
+      p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
+      strictEqual(p.hasTraversalAnchor(SESSION_ID), true, "anchored after a traversal call");
+    });
+  });
+
+  describe("Task 6 — ADR-0012 bootstrap-nudge (docs)", () => {
+    it("ADR-0012 exists in .vault/adrs/, parses as ADR-0012, and documents the bootstrap queue (mirrors identity-nudge bridge)", () => {
+      const adr = readFileSync(
+        new URL("../.vault/adrs/0012-bootstrap-nudge.adr.md", import.meta.url),
+        "utf8"
+      );
+      ok(adr.includes("id: ADR-0012"));
+      ok(adr.includes("bootstrap"));
+      ok(adr.includes("pendingTraversal") || adr.includes("queue"), "documents the per-session queue bridge");
     });
   });
 
@@ -494,6 +656,130 @@ describe("AgentPersonaCoachPlugin", () => {
       // BuildCoachPrompt should use the custom promptTemplate
       ok(mockClient.calls[0].messages[0].content.includes("Focused prompt"));
       ok(!mockClient.calls[0].messages[0].content.includes("IDENTITY CHECK"));
+    });
+  });
+
+  describe("supervisor wiring (Task 8, spec §7 / D7)", () => {
+    const SUPERVISOR_LADDER = ["advisory-tier0", "explicit-tier1", "brutal-tier2"];
+    const SKIP_VERDICT = JSON.stringify({ classification: "skip" });
+    const EVASIVE_VERDICT = JSON.stringify({ classification: "evasive" });
+    const COMPLIANT_VERDICT = JSON.stringify({ classification: "compliant" });
+
+    function aSupervisorPlugin(supervisorOverrides: Record<string, unknown> = {}) {
+      const plugin = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: {
+            supervisor: {
+              enabled: true,
+              model: "small-model",
+              maxCallsPerSession: 10,
+              sampleEvery: 2,
+              ladderWording: SUPERVISOR_LADDER,
+              ...supervisorOverrides,
+            },
+          },
+        },
+      });
+      return plugin;
+    }
+
+    it("supervise returns the escalated ladder text on 'skip' and escalates on consecutive skips", async () => {
+      const client = aMockChatClient([SKIP_VERDICT, SKIP_VERDICT]);
+      const plugin = aSupervisorPlugin();
+      plugin.setChatClient(client);
+      plugin.appendAssistantTurn("ses-8", "last assistant reply without node status");
+
+      const first = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+      strictEqual(first.kind, "skip", "first skip verdict kind");
+      strictEqual(first.text, "advisory-tier0", "first skip escalates to tier0");
+
+      const second = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+      strictEqual(second.kind, "skip");
+      strictEqual(second.text, "explicit-tier1", "second consecutive skip escalates to tier1");
+
+      strictEqual(client.calls.length, 2, "one judge call per supervise");
+    });
+
+    it("supervise returns the escalated text on 'evasive'", async () => {
+      const client = aMockChatClient(EVASIVE_VERDICT);
+      const plugin = aSupervisorPlugin();
+      plugin.setChatClient(client);
+      plugin.appendAssistantTurn("ses-8", "the weather is nice (unrelated)");
+
+      const result = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+
+      strictEqual(result.kind, "evasive");
+      strictEqual(result.text, "advisory-tier0", "first evasive escalates to tier0");
+    });
+
+    it("resets the skip chain on 'compliant' so the next skip starts at tier0 again", async () => {
+      const client = aMockChatClient([SKIP_VERDICT, COMPLIANT_VERDICT, SKIP_VERDICT]);
+      const plugin = aSupervisorPlugin();
+      plugin.setChatClient(client);
+      plugin.appendAssistantTurn("ses-8", "compliant reply");
+
+      const skip1 = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+      strictEqual(skip1.text, "advisory-tier0");
+
+      const compliant = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+      strictEqual(compliant.kind, "compliant");
+      strictEqual(compliant.text, undefined, "compliant carries no escalated text");
+
+      const skip2 = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+      strictEqual(skip2.text, "advisory-tier0", "skip chain reset on compliant");
+    });
+
+    it("makes no LLM call when the supervisor is disabled (returns compliant)", async () => {
+      const client = aMockChatClient(SKIP_VERDICT);
+      const plugin = new AgentPersonaCoachPlugin();
+      plugin.setChatClient(client);
+      plugin.appendAssistantTurn("ses-8", "irrelevant");
+
+      const result = await plugin.supervise("ses-8", []);
+      strictEqual(result.kind, "compliant");
+      strictEqual(result.text, undefined);
+      strictEqual(client.calls.length, 0, "no createCompletion when supervisor disabled");
+    });
+
+    it("ring buffer is bounded by traversal.historyDepth (default 5)", () => {
+      const plugin = aSupervisorPlugin();
+      for (let i = 1; i <= 7; i++) {
+        plugin.appendAssistantTurn("ses-8", `turn-${i}`);
+      }
+      const turns = plugin.getRecentAssistantTurns("ses-8");
+      strictEqual(turns.length, 5, "buffer caps at historyDepth");
+      strictEqual(turns[0], "turn-3", "oldest entry kept");
+      strictEqual(turns[4], "turn-7", "newest entry kept");
+    });
+
+    it("supervise with a throwing client does not reject (best-effort, D7)", async () => {
+      const client = aMockChatClient(SKIP_VERDICT);
+      const throwing = {
+        calls: [] as any[],
+        async createCompletion() {
+          throw new Error("model explode");
+        },
+      };
+      const plugin = aSupervisorPlugin();
+      plugin.setChatClient(throwing as any);
+      plugin.appendAssistantTurn("ses-8", "last turn");
+
+      let settled = false;
+      let result: { kind: string; text?: string } | undefined;
+      try {
+        result = await plugin.supervise("ses-8", plugin.getRecentAssistantTurns("ses-8"));
+        settled = true;
+      } catch {
+        settled = false;
+      }
+
+      ok(settled, "supervise must not throw when judge's model client throws");
+      strictEqual(result?.kind, "compliant", "failure fails open to compliant");
+      strictEqual(result?.text, undefined);
     });
   });
 });

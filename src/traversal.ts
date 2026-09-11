@@ -1,4 +1,9 @@
-import { formatTraversalNudge, formatBacktrackNudge } from "./injector.js";
+import {
+  formatTraversalNudge,
+  formatBacktrackNudge,
+  formatRealignNudge,
+  formatHardGateMessage,
+} from "./injector.js";
 
 /**
  * Traversal-Nudge mode — deterministic, zero-LLM state machine (AD-7).
@@ -14,17 +19,31 @@ export interface TraversalConfig {
   toolPatterns: string[]; // substring match on tool name
   nudgeAfter: number; // first nudge after N non-traversal calls
   recurrentEvery: number; // re-nudge every N calls after first
-  maxRepeats: number; // cap per anchor
+  maxRepeats: number | typeof Infinity; // cap per anchor; Infinity = unlimited cadence (D4)
   historyDepth: number; // path history size for backtrack suggestions
   backtrackAfter: number; // same-node re-anchors before a backtrack nudge fires
   wording: string; // progress template with {node}
   stuckWording: string; // backtrack template with {node}
+  // ── Task 1: extended config surface (spec §8, D8) — mirrors types.ts ──
+  onUserMessage: "reset" | "realign";
+  bootstrapWording: string;
+  realignWording: string;
+  ladderWording: string[];
+  hardGate: { enabled: boolean; allowedTools?: string[]; wording: string };
+  supervisor: {
+    enabled: boolean;
+    model: string;
+    maxCallsPerSession: number;
+    sampleEvery: number;
+    ladderWording: string[];
+  };
 }
 
 export interface TraversalSessionState {
   anchorNode?: string; // last traversal tool label (e.g. "expandFileRelations")
   path: string[]; // recent anchor history (last historyDepth) — for backtrack suggestions
   pending: boolean; // agent anchored on a node
+  realignPending: boolean; // a user message arrived and the agent must re-affirm (D3 / spec §4)
   nonTraversalCalls: number; // consecutive non-traversal calls since anchor
   repeats: number; // nudges already injected for this anchor
   cycleCount: number; // consecutive re-anchors on the SAME node (stuck-in-branch signal)
@@ -37,6 +56,19 @@ export interface TraversalSessionState {
  */
 const PAUSE_NODE_WORDING =
   "You are on a wait node ({node}) — do not proceed until the user answers; re-expand when direction is received.";
+
+/**
+ * Resolve the hard gate's effective allow-list (spec §6 / D6):
+ * `toolPatterns ∪ hardGate.allowedTools` — and `toolPatterns` alone when
+ * `allowedTools` is not provided / empty. Pure; the engine exposes it via the
+ * `hardGateAllowedTools` getter so callers (and tests) can observe it.
+ */
+export function resolveHardGateAllowList(config: TraversalConfig): string[] {
+  const explicit =
+    config.hardGate.allowedTools?.filter((t) => typeof t === "string" && t !== "") ?? [];
+  if (explicit.length === 0) return [...config.toolPatterns];
+  return [...new Set([...config.toolPatterns, ...explicit])];
+}
 
 export class TraversalNudgeEngine {
   private states = new Map<string, TraversalSessionState>();
@@ -62,6 +94,64 @@ export class TraversalNudgeEngine {
    */
   reset(sessionId: string): void {
     this.states.set(sessionId, this.createState());
+  }
+
+  /**
+   * Realign a session after a user message (onUserMessage: "realign" — D3).
+   * Keeps the anchor (node, kind, path) but re-opens the compliance window:
+   * the next observation must be a traversal call (re-affirmation) or the
+   * first non-traversal call fires an immediate realign nudge.
+   */
+  realign(sessionId: string): void {
+    const state = this.getState(sessionId);
+    state.realignPending = true;
+    state.nonTraversalCalls = 0;
+    state.repeats = 0;
+    state.cycleCount = 0;
+  }
+
+  /**
+   * Whether a session is anchored on a decision-tree node (used by the
+   * bootstrap wiring — Task 6). Pure engine state.
+   */
+  hasAnchor(sessionId: string): boolean {
+    const state = this.getState(sessionId);
+    return state.pending === true && state.anchorNode !== undefined;
+  }
+
+  /**
+   * The hard gate's observable effective allow-list (spec §6 / D6):
+   * `toolPatterns ∪ hardGate.allowedTools`, falling back to `toolPatterns`
+   * when `allowedTools` is not provided or empty.
+   */
+  get hardGateAllowedTools(): string[] {
+    return resolveHardGateAllowList(this.config);
+  }
+
+  /**
+   * Deterministic blocking decision for the hard gate (spec §6 / D6) — the
+   * narrow, opt-in exception to ADR-0009 (see ADR-0013). Returns the message
+   * to block with, or null to allow. The engine only RETURNS the message —
+   * the server's before-hook (Task 6) throws it.
+   *
+   * Block/allow matrix:
+   * - `!config.enabled` or `!config.hardGate.enabled` → null (feature off, D8).
+   * - un-anchored session → null (first-time sessions are covered by the
+   *   bootstrap path, never the gate).
+   * - `realignPending === false` → null (never block outside the realignment
+   *   window).
+   * - traversal tool (`isTraversalTool`, reused) or tool in the effective
+   *   allow-list → null (allows).
+   * - any other tool → `formatHardGateMessage(hardGate.wording)`.
+   */
+  blockIfNeeded(sessionID: string, toolName: string, toolArgs?: unknown): string | null {
+    if (!this.config.enabled || !this.config.hardGate.enabled) return null;
+    if (!this.hasAnchor(sessionID)) return null;
+    const state = this.getState(sessionID);
+    if (state.realignPending !== true) return null;
+    if (this.isTraversalTool(toolName, toolArgs)) return null;
+    if (this.matchesAnyPattern(toolName, this.hardGateAllowedTools, toolArgs)) return null;
+    return formatHardGateMessage(this.config.hardGate.wording);
   }
 
   /**
@@ -91,11 +181,21 @@ export class TraversalNudgeEngine {
    * shapes (the wrapped tool name lives in args.name).
    */
   private isTraversalTool(toolName: string, toolArgs?: unknown): boolean {
-    if (this.config.toolPatterns.some((p) => toolName.includes(p))) return true;
+    return this.matchesAnyPattern(toolName, this.config.toolPatterns, toolArgs);
+  }
+
+  /**
+   * Substring match of a tool name (and, for `meta_use`-wrapped shapes, the
+   * wrapped `args.name`) against any pattern in the given list. Shared by
+   * `isTraversalTool` (toolPatterns) and `blockIfNeeded` (effective
+   * allow-list) — single source of truth for shape handling.
+   */
+  private matchesAnyPattern(toolName: string, patterns: string[], toolArgs?: unknown): boolean {
+    if (patterns.some((p) => toolName.includes(p))) return true;
     if (toolArgs && typeof toolArgs === "object") {
       const name = (toolArgs as Record<string, unknown>).name;
       if (typeof name === "string") {
-        return this.config.toolPatterns.some((p) => name.includes(p));
+        return patterns.some((p) => name.includes(p));
       }
     }
     return false;
@@ -146,6 +246,10 @@ export class TraversalNudgeEngine {
     const kind = this.classifyAnchor(toolName, toolArgs);
     const nudges: string[] = [];
 
+    // ANY traversal call — first-anchor, advancement, or same-node re-anchor —
+    // means the agent has re-affirmed/aligned (spec §4 / D3).
+    state.realignPending = false;
+
     if (state.pending && state.anchorNode !== undefined) {
       if (this.isAnchorChanged(nodeId, state.anchorNode)) {
         // Advancement — forward or backward jump: re-anchor, reset counters.
@@ -186,6 +290,16 @@ export class TraversalNudgeEngine {
     if (!state.pending || state.anchorNode === undefined) return [];
     if (state.repeats >= this.config.maxRepeats) return [];
 
+    // Realign window (D3): the first non-traversal call emits the realign
+    // nudge immediately, before the nudgeAfter cadence. The flag is consumed
+    // so subsequent calls follow the normal ladder cadence.
+    if (state.realignPending) {
+      state.repeats++;
+      const nudge = this.buildProgressNudge(state);
+      state.realignPending = false;
+      return [nudge];
+    }
+
     const calls = state.nonTraversalCalls;
     if (calls < this.config.nudgeAfter) return [];
     if ((calls - this.config.nudgeAfter) % this.config.recurrentEvery !== 0) return [];
@@ -196,10 +310,26 @@ export class TraversalNudgeEngine {
 
   private buildProgressNudge(state: TraversalSessionState): string {
     const nodeLabel = state.anchorNode ?? "";
+    if (state.realignPending) {
+      return formatRealignNudge(this.config.realignWording, nodeLabel);
+    }
     if (state.anchorKind === "pause") {
       return formatTraversalNudge(PAUSE_NODE_WORDING, nodeLabel);
     }
-    return formatTraversalNudge(this.config.wording, nodeLabel);
+    return formatTraversalNudge(this.ladderWordingFor(state.repeats), nodeLabel);
+  }
+
+  /**
+   * Select the progress-nudge wording by intensity tier (spec §5.2 / D4).
+   * tier 0 (repeats < 3): advisory; tier 1 (3 <= repeats < 6): explicit;
+   * tier 2 (repeats >= 6): stern. Missing ladder entries fall back to the
+   * advisory `wording` — never throws, never emits undefined.
+   */
+  private ladderWordingFor(repeats: number): string {
+    const tier = repeats < 3 ? 0 : repeats < 6 ? 1 : 2;
+    const entry = this.config.ladderWording[tier];
+    if (typeof entry === "string" && entry !== "") return entry;
+    return this.config.wording;
   }
 
   /**
@@ -220,6 +350,7 @@ export class TraversalNudgeEngine {
       anchorNode: undefined,
       path: [],
       pending: false,
+      realignPending: false,
       nonTraversalCalls: 0,
       repeats: 0,
       cycleCount: 0,

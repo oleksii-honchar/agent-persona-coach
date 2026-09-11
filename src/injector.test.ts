@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import { ok } from "node:assert/strict";
-import { formatNudge } from "./injector.js";
+import {
+  formatNudge,
+  formatBootstrapNudge,
+  formatRealignNudge,
+  formatHardGateMessage,
+} from "./injector.js";
 
 describe("formatNudge", () => {
   it("should format identity nudge with correct category name", () => {
@@ -51,6 +56,39 @@ describe("formatNudge", () => {
     const result = formatNudge("identity", ["Single question?"]);
     ok(result.includes("- Single question?"));
     // Should not have extra newlines from join
+  });
+});
+
+describe("formatBootstrapNudge", () => {
+  it("should wrap the bootstrap wording in a <system-reminder> block", () => {
+    const result = formatBootstrapNudge("Enter your decision tree before your next tool.");
+    ok(result.startsWith("<system-reminder>"));
+    ok(result.endsWith("</system-reminder>"));
+    ok(result.includes("Enter your decision tree before your next tool."));
+  });
+});
+
+describe("formatRealignNudge", () => {
+  it("should wrap the realign wording in a <system-reminder> block", () => {
+    const result = formatRealignNudge("Re-evaluate whether node {node} still matches.", "10-realign");
+    ok(result.startsWith("<system-reminder>"));
+    ok(result.endsWith("</system-reminder>"));
+    ok(result.includes("Re-evaluate whether node"));
+  });
+
+  it("should interpolate the {node} placeholder with the node label", () => {
+    const result = formatRealignNudge("Current node is {node}. Report its status.", "10-understand");
+    ok(result.includes("Current node is 10-understand."));
+    ok(!result.includes("{node}"));
+  });
+});
+
+describe("formatHardGateMessage", () => {
+  it("should wrap the blocking message in a <system-reminder> block", () => {
+    const result = formatHardGateMessage("BLOCKED — realign with the decision tree now.");
+    ok(result.startsWith("<system-reminder>"));
+    ok(result.endsWith("</system-reminder>"));
+    ok(result.includes("BLOCKED — realign with the decision tree now."));
   });
 });
 

@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
-import { strictEqual, deepStrictEqual, notStrictEqual } from "node:assert/strict";
+import { strictEqual, deepStrictEqual, notStrictEqual, ok } from "node:assert/strict";
 import { extractPersona, extractPersonaFromSystem, DEFAULT_CONFIG, deepMerge, DeepPartial } from "./types.js";
+
+/**
+ * Compliance-status clause (spec §5.1): every traversal-nudge wording default must
+ * require the agent to state its current node plus target/veto/conditions status.
+ */
+const COMPLIANCE_CLAUSE =
+  "Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.";
 
 describe("extractPersona", () => {
   it("should extract persona from V1 agent with 'prompt' field", () => {
@@ -75,17 +82,23 @@ describe("DEFAULT_CONFIG", () => {
     strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 20);
   });
 
-  it("should have traversal with all 9 fields", () => {
+  it("should have traversal with all 15 fields", () => {
     deepStrictEqual(
       Object.keys(DEFAULT_CONFIG.categories.traversal).sort(),
       [
         "backtrackAfter",
+        "bootstrapWording",
         "enabled",
+        "hardGate",
         "historyDepth",
+        "ladderWording",
         "maxRepeats",
         "nudgeAfter",
+        "onUserMessage",
+        "realignWording",
         "recurrentEvery",
         "stuckWording",
+        "supervisor",
         "toolPatterns",
         "wording",
       ],
@@ -107,7 +120,7 @@ describe("DEFAULT_CONFIG", () => {
     strictEqual(DEFAULT_CONFIG.categories.traversal.backtrackAfter, 3);
     strictEqual(
       DEFAULT_CONFIG.categories.traversal.wording,
-      "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile).",
+      "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile). Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.",
     );
     strictEqual(
       DEFAULT_CONFIG.categories.traversal.stuckWording,
@@ -115,11 +128,59 @@ describe("DEFAULT_CONFIG", () => {
     );
   });
 
+  it("should default every new capability off except onUserMessage realign (D8)", () => {
+    const t = DEFAULT_CONFIG.categories.traversal;
+    // onUserMessage is the only new capability that changes behavior by default
+    strictEqual(t.onUserMessage, "realign");
+    // bootstrap / realign / ladder wording are present strings
+    strictEqual(typeof t.bootstrapWording, "string");
+    notStrictEqual(t.bootstrapWording, "");
+    strictEqual(typeof t.realignWording, "string");
+    notStrictEqual(t.realignWording, "");
+    strictEqual(t.ladderWording.length, 3);
+    strictEqual(t.ladderWording.every((w) => typeof w === "string"), true);
+    // hard gate is off with a BLOCKED message
+    strictEqual(t.hardGate.enabled, false);
+    deepStrictEqual(t.hardGate.allowedTools, []);
+    strictEqual(typeof t.hardGate.wording, "string");
+    strictEqual(t.hardGate.wording.includes("BLOCKED"), true);
+    // supervisor is off with documented limits
+    strictEqual(t.supervisor.enabled, false);
+    strictEqual(t.supervisor.model, "");
+    strictEqual(t.supervisor.maxCallsPerSession, 10);
+    strictEqual(t.supervisor.sampleEvery, 2);
+    strictEqual(t.supervisor.ladderWording.length, 3);
+    strictEqual(t.supervisor.ladderWording.every((w) => typeof w === "string"), true);
+  });
+
   it("should have coachPrompt as a non-empty string with key phrases", () => {
     strictEqual(typeof DEFAULT_CONFIG.coachPrompt, "string");
     notStrictEqual(DEFAULT_CONFIG.coachPrompt, "");
     strictEqual(DEFAULT_CONFIG.coachPrompt.includes("IDENTITY CHECK"), true);
     strictEqual(DEFAULT_CONFIG.coachPrompt.includes("{personaText}"), true);
+  });
+});
+
+describe("DEFAULT_CONFIG — compliance-status clause (spec §5.1)", () => {
+  it("should embed the clause in the progress wording default", () => {
+    const wording = DEFAULT_CONFIG.categories.traversal.wording;
+    ok(wording.includes("current node"));
+    ok(wording.includes("target, veto, and conditions"));
+    ok(wording.includes(COMPLIANCE_CLAUSE));
+  });
+
+  it("should embed the clause in the bootstrap wording default", () => {
+    const wording = DEFAULT_CONFIG.categories.traversal.bootstrapWording;
+    ok(wording.includes("current node"));
+    ok(wording.includes("target, veto, and conditions"));
+    ok(wording.includes(COMPLIANCE_CLAUSE));
+  });
+
+  it("should embed the clause in the realign wording default", () => {
+    const wording = DEFAULT_CONFIG.categories.traversal.realignWording;
+    ok(wording.includes("current node"));
+    ok(wording.includes("target, veto, and conditions"));
+    ok(wording.includes(COMPLIANCE_CLAUSE));
   });
 });
 
@@ -241,12 +302,39 @@ describe("deepMerge", () => {
     strictEqual(result.categories.traversal.backtrackAfter, 3);
     strictEqual(
       result.categories.traversal.wording,
-      "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile).",
+      "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile). Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.",
     );
     strictEqual(
       result.categories.traversal.stuckWording,
       "You keep re-anchoring on node {node} without progress. You may be stuck in this branch — jump back a few steps (re-expand an ancestor node's edges, or re-enter via getPersonaEntryNode) and try another branch.",
     );
+  });
+
+  it("should deep-merge a nested new key (hardGate.enabled) without mutating DEFAULT_CONFIG", () => {
+    const result = deepMerge(DEFAULT_CONFIG, {
+      categories: { traversal: { hardGate: { enabled: true } } },
+    });
+    // nested override applied
+    strictEqual(result.categories.traversal.hardGate.enabled, true);
+    // sibling hardGate fields preserved
+    deepStrictEqual(result.categories.traversal.hardGate.allowedTools, []);
+    strictEqual(typeof result.categories.traversal.hardGate.wording, "string");
+    // DEFAULT_CONFIG not mutated
+    strictEqual(DEFAULT_CONFIG.categories.traversal.hardGate.enabled, false);
+    // other new defaults preserved through the merge
+    strictEqual(result.categories.traversal.onUserMessage, "realign");
+    strictEqual(result.categories.traversal.supervisor.enabled, false);
+    strictEqual(result.categories.traversal.supervisor.maxCallsPerSession, 10);
+    strictEqual(result.categories.traversal.supervisor.sampleEvery, 2);
+  });
+
+  it("should pass maxRepeats: Infinity through deepMerge unchanged (D4 unlimited cadence)", () => {
+    const result = deepMerge(DEFAULT_CONFIG, {
+      categories: { traversal: { maxRepeats: Infinity } },
+    });
+    strictEqual(result.categories.traversal.maxRepeats, Infinity);
+    // default stays bounded when no override is provided
+    strictEqual(DEFAULT_CONFIG.categories.traversal.maxRepeats, 3);
   });
 });
 

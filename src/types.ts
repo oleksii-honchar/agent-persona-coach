@@ -39,11 +39,29 @@ export interface PluginConfig {
       toolPatterns: string[]; // substring match on tool name
       nudgeAfter: number; // first nudge after N non-traversal calls
       recurrentEvery: number; // re-nudge every N calls after first
-      maxRepeats: number; // cap per anchor
+      maxRepeats: number | typeof Infinity; // cap per anchor; Infinity = unlimited cadence (D4)
       historyDepth: number; // path history size for backtrack suggestions
       backtrackAfter: number; // same-node re-anchors before a backtrack nudge fires
       wording: string; // progress template with {node}
       stuckWording: string; // backtrack template with {node}
+      onUserMessage: "reset" | "realign"; // behavior on new user message (D8)
+      bootstrapWording: string; // first-tool bootstrap nudge wording (§3)
+      realignWording: string; // realign-on-user-message nudge wording (§4)
+      ladderWording: string[]; // 3 intensity tiers: advisory / explicit / stern (§5.2)
+      hardGate: {
+        // opt-in tool.execute.before enforcement (§6)
+        enabled: boolean;
+        allowedTools?: string[]; // extra tools allowed while gating (defaults to toolPatterns)
+        wording: string; // blocking message
+      };
+      supervisor: {
+        // opt-in LLM compliance supervisor (§7)
+        enabled: boolean;
+        model: string; // small model id
+        maxCallsPerSession: number; // rate limit per session
+        sampleEvery: number; // classify every N user messages
+        ladderWording: string[]; // 3 escalation tiers
+      };
     };
   };
 }
@@ -126,10 +144,39 @@ export const DEFAULT_CONFIG: PluginConfig = {
       maxRepeats: 3,
       historyDepth: 5,
       backtrackAfter: 3,
+      // wording + bootstrap/realign/ladder defaults carry the compliance-status
+      // clause (spec §5.1): the agent must report current node + target/veto/conditions.
       wording:
-        "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile).",
+        "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile). Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.",
       stuckWording:
         "You keep re-anchoring on node {node} without progress. You may be stuck in this branch — jump back a few steps (re-expand an ancestor node's edges, or re-enter via getPersonaEntryNode) and try another branch.",
+      onUserMessage: "realign",
+      bootstrapWording:
+        "You have a persona decision tree. Enter it before your next tool: call getPersonaEntryNode / expandFileRelations, then work from your current node. Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.",
+      realignWording:
+        "A new user message arrived. Re-evaluate whether node {node} still matches user intent; if not, traverse (expandFileRelations) — otherwise state the node and its target/veto/conditions status and continue with the task. Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.",
+      ladderWording: [
+        "You are on decision-tree node {node}. Follow its instruction, then traverse to the next node (expandFileRelations / fetchFile). Before proceeding, respond with your current node and the status of its target, veto, and conditions for traversal.",
+        "You have ignored the tree check N times. State current node + target/veto/conditions status now.",
+        "You are violating your persona's decision-tree protocol. Non-compliance will keep blocking your tools.",
+      ],
+      hardGate: {
+        enabled: false,
+        allowedTools: [],
+        wording:
+          "BLOCKED — your persona requires you to realign with the decision tree: call a traversal tool (expandFileRelations/fetchFile) and state current node + target/veto/conditions status before any other tool.",
+      },
+      supervisor: {
+        enabled: false,
+        model: "",
+        maxCallsPerSession: 10,
+        sampleEvery: 2,
+        ladderWording: [
+          "You have not reported your decision-tree status. Please state your current node and the status of its target, veto, and conditions.",
+          "You keep skipping the decision-tree check. State your current node and target/veto/conditions status NOW.",
+          "STOP — you are violating your persona's decision-tree protocol. Report current node + target/veto/conditions status immediately or your tools will remain blocked.",
+        ],
+      },
     },
   },
 };

@@ -2,6 +2,7 @@ import { AgentPersonaCoachPlugin } from "./index.js";
 import { ProviderChatClient } from "./provider-client.js";
 import { extractPersonaFromSystem } from "./types.js";
 import type { DeepPartial, PluginConfig } from "./types.js";
+import { formatBootstrapNudge } from "./injector.js";
 
 import { log } from "./logger.js";
 
@@ -38,6 +39,11 @@ export interface Hooks {
       metadata: unknown;
       inject?: Array<{ role: "user" | "system"; text: string }>;
     }
+  ) => Promise<void>;
+
+  "tool.execute.before"?: (
+    input: { tool: string; sessionID: string; callID: string },
+    output: { args: unknown }
   ) => Promise<void>;
 
   "experimental.chat.system.transform"?: (
@@ -77,6 +83,18 @@ export async function createServerHooks(
   const sessionAgent = new Map<string, string>();
   const initializedSessions = new Set<string>();
   const pendingUserMessageIdentity = new Map<string, boolean>();
+  // Single-shot bootstrap queue (Task 6, spec §3 / D2): a session enters this
+  // set when traversal is enabled and it has no decision-tree anchor yet; the
+  // flag is consumed (and deleted) on the first tool.execute.after.
+  const pendingTraversal = new Set<string>();
+  // Compliance-supervision queue (Task 8, spec §7 / D7): a session enters this
+  // set on a sampled user message (`supervisor.sampleEvery`, per-session
+  // counter) and the flag is consumed (and deleted) on the next
+  // tool.execute.after. Fire-and-forget: the LLM call happens off any hot
+  // path, is best-effort, and never blocks the tool.
+  const pendingSupervision = new Set<string>();
+  // Per-session user-message counter driving the supervisor sampling gate.
+  const supervisorMessageCount = new Map<string, number>();
 
   return {
     /**
@@ -101,19 +119,85 @@ export async function createServerHooks(
         log.info(`Identity nudge queued for session ${sessionID}`);
       }
 
-      // Reset the traversal engine — a new user message is a new task
-      // boundary: the previous node anchor must not carry over (spec C3 / AD-8).
+      // Bootstrap queue (Task 6, spec §3): when traversal is enabled and this
+      // session is NOT yet anchored on a decision-tree node, queue a
+      // single-shot bootstrap nudge for the first tool.execute.after.
+      const traversalConfig = plugin.config?.categories?.traversal;
+      if (traversalConfig?.enabled && !plugin.hasTraversalAnchor?.(sessionID)) {
+        pendingTraversal.add(sessionID);
+        log.info(`Traversal bootstrap queued for session ${sessionID}`);
+      }
+
+      // Route reset vs realign on user message (ADR-0011 / D3): the plugin
+      // method dispatches to engine.realign when onUserMessage === "realign"
+      // (default — anchor kept, re-affirmation window opened), else to
+      // engine.reset (old AD-8 strict task-boundary escape hatch).
       plugin.resetTraversal?.(sessionID);
+
+      // Compliance-supervision queue (Task 8, spec §7): when the supervisor is
+      // enabled, sample every `sampleEvery`-th user message per session
+      // (counter-based; sampleEvery ≤ 0 falls back to every message). The
+      // actual LLM classification is deferred to the next tool.execute.after —
+      // fire-and-forget, off the hot path (D7).
+      const supervisorConfig = traversalConfig?.supervisor;
+      if (supervisorConfig?.enabled) {
+        const every = supervisorConfig.sampleEvery > 0 ? supervisorConfig.sampleEvery : 1;
+        const count = (supervisorMessageCount.get(sessionID) ?? 0) + 1;
+        supervisorMessageCount.set(sessionID, count);
+        if (count % every === 0) {
+          pendingSupervision.add(sessionID);
+          log.info(`Supervision queued for session ${sessionID} (user message ${count})`);
+        }
+      }
     },
 
-   /**
-      * tool.execute.after — Fires after each tool execution.
+    /**
+     * tool.execute.after — Fires after each tool execution.
      * Checks cadence-based categories (identity, references, progress)
      * and injects the nudge as a synthetic system message via output.inject.
      */
     "tool.execute.after": async (input, output) => {
       const { tool, sessionID, args } = input;
       const agentName = sessionAgent.get(sessionID) ?? "";
+
+      const injects: Array<{ role: "user" | "system"; text: string }> = [];
+
+      // Single-shot bootstrap (Task 6, spec §3): a fresh/un-anchored session's
+      // first tool call carries the bootstrap nudge as a system-role inject,
+      // prepended BEFORE any existing category nudge (D2). The flag is deleted
+      // so the bootstrap never re-injects on later calls.
+      if (pendingTraversal.has(sessionID)) {
+        const bootstrapWording = plugin.config?.categories?.traversal?.bootstrapWording ?? "";
+        if (bootstrapWording) {
+          injects.push({ role: "system", text: formatBootstrapNudge(bootstrapWording) });
+        }
+        pendingTraversal.delete(sessionID);
+      }
+
+      // Compliance supervisor (Task 8, spec §7 / D7): when a sampled user
+      // message queued a supervision, run it now (off the hot path — sampled +
+      // rate-limited) and merge an escalated verdict into output.inject as a
+      // durable synthetic system message (same inject pattern as the bootstrap
+      // path, per 02-tool-execute-after-inject.md). Best-effort: any failure
+      // logs and is swallowed — the hook never rejects and the tool is never
+      // blocked (the deterministic engine is the guarantee).
+      if (pendingSupervision.has(sessionID)) {
+        const recentTurns = plugin.getRecentAssistantTurns?.(sessionID) ?? [];
+        try {
+          const verdict = await plugin.supervise?.(sessionID, recentTurns);
+          if (verdict && verdict.kind !== "compliant" && verdict.text) {
+            injects.push({ role: "system", text: verdict.text });
+            log.info(`Supervision verdict ${verdict.kind} for session ${sessionID} — escalated message injected`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(`Supervision failed for session ${sessionID}; never blocking the tool (D7).`, {
+            error: message,
+          });
+        } finally {
+          pendingSupervision.delete(sessionID);
+        }
+      }
 
       const nudges = plugin.onToolAfter?.(sessionID, tool, args, agentName, {}) ?? [];
 
@@ -123,8 +207,25 @@ export async function createServerHooks(
           .join(", ");
         log.info(`${categories} (${nudges.length} nudge${nudges.length > 1 ? "s" : ""})`, { nudges });
 
-        // Inject each nudge as a separate synthetic system message
-        output.inject = nudges.map(text => ({ role: "user" as const, text }));
+        // Inject each nudge as a separate synthetic user message
+        injects.push(...nudges.map(text => ({ role: "user" as const, text })));
+      }
+
+      if (injects.length > 0) {
+        output.inject = injects;
+      }
+    },
+
+    /**
+     * tool.execute.before — Fires before each tool execution (Task 6, spec §6,
+     * ADR-0013). Delegates to the plugin's onToolBefore (the traversal hard
+     * gate). If it returns a blocking message, throw it so the harness aborts
+     * the tool call before it runs. Returns null → allow the tool.
+     */
+    "tool.execute.before": async (input, output) => {
+      const message = await plugin.onToolBefore?.(input.sessionID, input.tool, output.args);
+      if (message) {
+        throw new Error(message);
       }
     },
 
