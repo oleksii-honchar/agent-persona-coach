@@ -122,10 +122,14 @@ export async function createServerHooks(
       // Bootstrap queue (Task 6, spec §3): when traversal is enabled and this
       // session is NOT yet anchored on a decision-tree node, queue a
       // single-shot bootstrap nudge for the first tool.execute.after.
+      // When forceAlways: true, bypass the anchor check and queue for all sessions.
       const traversalConfig = plugin.config?.categories?.traversal;
-      if (traversalConfig?.enabled && !plugin.hasTraversalAnchor?.(sessionID)) {
-        pendingTraversal.add(sessionID);
-        log.info(`Traversal bootstrap queued for session ${sessionID}`);
+      if (traversalConfig?.enabled) {
+        const forceAlways = traversalConfig.forceAlways === true;
+        if (forceAlways || !plugin.hasTraversalAnchor?.(sessionID)) {
+          pendingTraversal.add(sessionID);
+          log.info(`Traversal bootstrap queued for session ${sessionID}`);
+        }
       }
 
       // Route reset vs realign on user message (ADR-0011 / D3): the plugin

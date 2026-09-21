@@ -36,6 +36,7 @@ export interface PluginConfig {
     progress: { enabled: boolean; cadence: number };
     traversal: {
       enabled: boolean;
+      forceAlways?: boolean; // when true, fire nudges for all agents regardless of anchor state
       toolPatterns: string[]; // substring match on tool name
       nudgeAfter: number; // first nudge after N non-traversal calls
       recurrentEvery: number; // re-nudge every N calls after first
@@ -138,6 +139,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
     progress: { enabled: true, cadence: 20 },
     traversal: {
       enabled: false,
+      forceAlways: false,
       toolPatterns: ["getPersonaEntryNode", "expandFileRelations", "fetchFile", "getPersonaStatus"],
       nudgeAfter: 8,
       recurrentEvery: 8,

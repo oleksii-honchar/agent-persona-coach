@@ -82,13 +82,14 @@ describe("DEFAULT_CONFIG", () => {
     strictEqual(DEFAULT_CONFIG.categories.progress.cadence, 20);
   });
 
-  it("should have traversal with all 15 fields", () => {
+  it("should have traversal with all 16 fields", () => {
     deepStrictEqual(
       Object.keys(DEFAULT_CONFIG.categories.traversal).sort(),
       [
         "backtrackAfter",
         "bootstrapWording",
         "enabled",
+        "forceAlways",
         "hardGate",
         "historyDepth",
         "ladderWording",
@@ -107,6 +108,7 @@ describe("DEFAULT_CONFIG", () => {
 
   it("should have traversal disabled with exact defaults", () => {
     strictEqual(DEFAULT_CONFIG.categories.traversal.enabled, false);
+    strictEqual(DEFAULT_CONFIG.categories.traversal.forceAlways, false);
     deepStrictEqual(DEFAULT_CONFIG.categories.traversal.toolPatterns, [
       "getPersonaEntryNode",
       "expandFileRelations",

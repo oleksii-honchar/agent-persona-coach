@@ -37,10 +37,12 @@ export interface TraversalConfig {
     sampleEvery: number;
     ladderWording: string[];
   };
+  // ── Task 2: forceAlways — fire nudges for all agents regardless of anchor ──
+  forceAlways?: boolean;
 }
 
 export interface TraversalSessionState {
-  anchorNode?: string; // last traversal tool label (e.g. "expandFileRelations")
+  anchorNode?: string | null; // last traversal tool label; null = synthetic (forceAlways)
   path: string[]; // recent anchor history (last historyDepth) — for backtrack suggestions
   pending: boolean; // agent anchored on a node
   realignPending: boolean; // a user message arrived and the agent must re-affirm (D3 / spec §4)
@@ -233,7 +235,7 @@ export class TraversalNudgeEngine {
    * Any different node — forward OR backward — counts as advancement
    * (AD-12 labyrinth rule); resets cycleCount.
    */
-  private isAnchorChanged(newAnchor: string, prevAnchor: string): boolean {
+  private isAnchorChanged(newAnchor: string, prevAnchor: string | null): boolean {
     return newAnchor !== prevAnchor;
   }
 
@@ -287,6 +289,14 @@ export class TraversalNudgeEngine {
 
   private observeNonTraversal(state: TraversalSessionState): string[] {
     state.nonTraversalCalls++;
+
+    // forceAlways: skip anchor gating — treat every session as if anchored
+    // from the start. Use bootstrapWording for the initial nudge.
+    if (this.config.forceAlways && !state.pending && state.anchorNode === undefined) {
+      state.pending = true;
+      state.anchorNode = null;
+    }
+
     if (!state.pending || state.anchorNode === undefined) return [];
     if (state.repeats >= this.config.maxRepeats) return [];
 
@@ -316,6 +326,10 @@ export class TraversalNudgeEngine {
     if (state.anchorKind === "pause") {
       return formatTraversalNudge(PAUSE_NODE_WORDING, nodeLabel);
     }
+    // forceAlways with no real anchor: use bootstrapWording for the initial nudge
+    if (this.config.forceAlways && state.anchorNode === null) {
+      return formatTraversalNudge(this.config.bootstrapWording, nodeLabel);
+    }
     return formatTraversalNudge(this.ladderWordingFor(state.repeats), nodeLabel);
   }
 
@@ -336,7 +350,8 @@ export class TraversalNudgeEngine {
    * Append a node to the path history, capping at historyDepth. Consecutive
    * duplicates are not pushed (same-node re-anchors are cycles, not steps).
    */
-  private pushPath(state: TraversalSessionState, nodeId: string): void {
+  private pushPath(state: TraversalSessionState, nodeId: string | null): void {
+    if (nodeId === null) return; // synthetic anchor (forceAlways) — no path tracking
     if (state.path[state.path.length - 1] !== nodeId) {
       state.path.push(nodeId);
       if (state.path.length > this.config.historyDepth) {

@@ -778,3 +778,117 @@ describe("Task 5 — ADR-0013 hard gate (docs)", () => {
     ok(adr.includes("ADR-0009"));
   });
 });
+
+describe("TraversalNudgeEngine — forceAlways (Task 2)", () => {
+  it("should fire nudge for non-anchored session when forceAlways is true (bootstrap)", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        forceAlways: true,
+        nudgeAfter: 1,
+        recurrentEvery: 1,
+        maxRepeats: 3,
+        bootstrapWording: "BOOTSTRAP-FORCE for {node}",
+      })
+    );
+    // No anchor — agent calls a non-traversal tool immediately.
+    const nudges = engine.observeTool("s1", "bash", { command: "ls" });
+    strictEqual(nudges.length, 1, "should fire bootstrap nudge without prior anchor");
+    ok(nudges[0].includes("BOOTSTRAP-FORCE"));
+    ok(nudges[0].includes("Traversal Check"));
+  });
+
+  it("should fire recurrent nudges for all sessions when forceAlways is true", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        forceAlways: true,
+        nudgeAfter: 1,
+        recurrentEvery: 2,
+        maxRepeats: 5,
+      })
+    );
+    // First call fires bootstrap.
+    let nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    // Recurrent nudges fire per cadence.
+    engine.observeTool("s1", "bash"); // 2
+    nudges = engine.observeTool("s1", "bash"); // 3 — recurrent
+    strictEqual(nudges.length, 1);
+    engine.observeTool("s1", "bash"); // 4
+    nudges = engine.observeTool("s1", "bash"); // 5 — recurrent
+    strictEqual(nudges.length, 1);
+  });
+
+  it("should not fire nudge for non-anchored session when forceAlways is false (default)", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        forceAlways: false,
+        nudgeAfter: 1,
+      })
+    );
+    const nudges = engine.observeTool("s1", "bash");
+    deepStrictEqual(nudges, [], "should not fire without anchor when forceAlways is false");
+  });
+
+  it("should not fire nudge for non-anchored session when forceAlways is unset", () => {
+    const engine = new TraversalNudgeEngine(makeConfig({ nudgeAfter: 1 }));
+    const nudges = engine.observeTool("s1", "bash");
+    deepStrictEqual(nudges, [], "should not fire without anchor when forceAlways is unset");
+  });
+
+  it("should use default bootstrapWording when forceAlways is true but not specified", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        forceAlways: true,
+        nudgeAfter: 1,
+      })
+    );
+    const nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("persona decision tree")); // from default bootstrapWording
+  });
+
+  it("should preserve anchor-based behavior for anchored sessions even when forceAlways is true", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        forceAlways: true,
+        nudgeAfter: 2,
+        recurrentEvery: 2,
+        maxRepeats: 5,
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    // Anchor exists; cadence applies as normal.
+    deepStrictEqual(engine.observeTool("s1", "bash"), []); // 1 < nudgeAfter
+    const nudges = engine.observeTool("s1", "bash"); // 2 >= nudgeAfter
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("file_a")); // real anchor, not synthetic null
+  });
+
+  it("should accept forceAlways in TraversalConfig at the type level", () => {
+    const cfg: TraversalConfig = {
+      enabled: true,
+      toolPatterns: ["expandFileRelations"],
+      nudgeAfter: 1,
+      recurrentEvery: 1,
+      maxRepeats: 3,
+      historyDepth: 5,
+      backtrackAfter: 3,
+      wording: "w",
+      stuckWording: "s",
+      onUserMessage: "realign",
+      bootstrapWording: "b",
+      realignWording: "r",
+      ladderWording: ["a", "b", "c"],
+      hardGate: { enabled: false, allowedTools: [], wording: "blocked" },
+      supervisor: {
+        enabled: false,
+        model: "",
+        maxCallsPerSession: 10,
+        sampleEvery: 2,
+        ladderWording: ["x", "y", "z"],
+      },
+      forceAlways: true,
+    };
+    strictEqual(cfg.forceAlways, true);
+  });
+});

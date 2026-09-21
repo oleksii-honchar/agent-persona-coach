@@ -1043,6 +1043,133 @@ describe("server", () => {
     });
   });
 
+  // ── Task 3 (forceAlways): chat.message hook queues bootstrap for all sessions ──
+
+  describe("Task 3 — forceAlways bootstrap queue (chat.message hook)", () => {
+    function forceAlwaysHooks(overrides: { forceAlways?: boolean } = {}) {
+      const plugin = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: {
+            enabled: true,
+            forceAlways: overrides.forceAlways ?? true,
+            nudgeAfter: 2,
+            recurrentEvery: 2,
+            maxRepeats: 3,
+          },
+        },
+      });
+      return createServerHooks(plugin, aMockPluginInput() as any);
+    }
+
+    function aToolOutput() {
+      return { title: "", output: "", metadata: {} } as any;
+    }
+
+    it("queues bootstrap nudge for non-anchored session when forceAlways: true", async () => {
+      const hooks = await forceAlwaysHooks({ forceAlways: true });
+
+      await hooks["chat.message"]!(
+        { sessionID: "sess-fa-1", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+
+      const first = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-fa-1", callID: "c1", args: {} } as any,
+        first
+      );
+
+      ok(first.inject && first.inject.length >= 1, "at least bootstrap nudge injected on first tool call");
+      ok(
+        first.inject.some((n: { role: string; text: string }) =>
+          n.role === "system" &&
+          n.text.includes("Traversal Check") &&
+          n.text.includes("Enter it before your next tool")
+        ),
+        "bootstrap nudge (system role, bootstrapWording) is injected"
+      );
+    });
+
+    it("queues bootstrap nudge for ALREADY-anchored session when forceAlways: true (bypasses anchor check)", async () => {
+      const hooks = await forceAlwaysHooks({ forceAlways: true });
+
+      // First user message — anchors the session via traversal tool
+      await hooks["chat.message"]!(
+        { sessionID: "sess-fa-2", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+      const anchored = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "bensyne_expandFileRelations", sessionID: "sess-fa-2", callID: "c1", args: { file_id: "file_a" } } as any,
+        anchored
+      );
+      ok(anchored.inject && anchored.inject.length === 1, "first call consumed bootstrap");
+
+      // Second user message — with forceAlways: true, bootstrap is queued again even though anchored
+      await hooks["chat.message"]!(
+        { sessionID: "sess-fa-2", agent: "test-agent" } as any,
+        { message: "again", parts: [] }
+      );
+
+      const after = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-fa-2", callID: "c2", args: {} } as any,
+        after
+      );
+
+      ok(
+        after.inject && after.inject.length >= 1,
+        "bootstrap re-queued even for anchored session when forceAlways: true"
+      );
+      ok(
+        after.inject.some((n: { role: string; text: string }) => n.role === "system" && n.text.includes("Traversal Check")),
+        "bootstrap nudge injected (system role, Traversal Check text)"
+      );
+    });
+
+    it("preserves existing anchor-based behavior when forceAlways: false", async () => {
+      const hooks = await forceAlwaysHooks({ forceAlways: false });
+
+      // First user message — queues bootstrap
+      await hooks["chat.message"]!(
+        { sessionID: "sess-fa-3", agent: "test-agent" } as any,
+        { message: "", parts: [] }
+      );
+      const first = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-fa-3", callID: "c1", args: {} } as any,
+        first
+      );
+      ok(first.inject && first.inject.length === 1, "bootstrap injected on first call");
+
+      // Anchor the session
+      await hooks["tool.execute.after"]!(
+        { tool: "bensyne_expandFileRelations", sessionID: "sess-fa-3", callID: "c2", args: { file_id: "file_a" } } as any,
+        aToolOutput()
+      );
+
+      // Second user message — with forceAlways: false, no re-queue for anchored session
+      await hooks["chat.message"]!(
+        { sessionID: "sess-fa-3", agent: "test-agent" } as any,
+        { message: "again", parts: [] }
+      );
+      const after = aToolOutput();
+      await hooks["tool.execute.after"]!(
+        { tool: "read", sessionID: "sess-fa-3", callID: "c3", args: {} } as any,
+        after
+      );
+
+      ok(
+        !after.inject || !after.inject.some((n: { role: string; text: string }) => n.role === "system" && n.text.includes("Enter it before your next tool")),
+        "no re-queued bootstrap for anchored session when forceAlways: false"
+      );
+    });
+  });
+
   // ── Task 1 (ADR-002 + ADR-004): identity gate + race fix ──
 
   describe("experimental.chat.system.transform identity gate + race fix", () => {
