@@ -146,6 +146,15 @@ describe("DEFAULT_CONFIG", () => {
     deepStrictEqual(t.hardGate.allowedTools, []);
     strictEqual(typeof t.hardGate.wording, "string");
     strictEqual(t.hardGate.wording.includes("BLOCKED"), true);
+    // v2 config surface (C2/C3, D4/D5): structural-write allow-list defaults empty;
+    // L2 base URL must remain absent/undefined by default (L2 skipped)
+    deepStrictEqual(t.hardGate.allowedBashPatterns, []);
+    strictEqual(t.hardGate.opencodeBaseUrl, undefined);
+    // v2 wording: resume-from-current-node (references fetchFile + {node}),
+    // never instructs getPersonaEntryNode re-entry for anchored sessions
+    strictEqual(t.hardGate.wording.includes("{node}"), true);
+    strictEqual(t.hardGate.wording.includes("fetchFile"), true);
+    strictEqual(t.hardGate.wording.includes("Resume from your current decision node"), true);
     // supervisor is off with documented limits
     strictEqual(t.supervisor.enabled, false);
     strictEqual(t.supervisor.model, "");

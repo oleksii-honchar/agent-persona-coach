@@ -104,11 +104,11 @@ describe("AgentPersonaCoachPlugin", () => {
       await plugin.initializeSession(AGENT_NAME, AGENT_INFO_V1);
     });
 
-    it("should expose onToolBefore (Task 6 hard gate) returning null when the gate is off", () => {
+    it("should expose onToolBefore (Task 6 hard gate) returning null when the gate is off", async () => {
       // DEFAULT_CONFIG: traversal.enabled=false and hardGate.enabled=false →
       // always null, never throws, never blocks.
-      strictEqual(plugin.onToolBefore(SESSION_ID, "read", {}), null);
-      strictEqual(plugin.onToolBefore(SESSION_ID, "bash", { command: "ls" }), null);
+      strictEqual(await plugin.onToolBefore(SESSION_ID, "read", {}), null);
+      strictEqual(await plugin.onToolBefore(SESSION_ID, "bash", { command: "ls" }), null);
     });
 
     it("should not trigger rules nudge when tool is not in criticalPermissions (DEFAULT_CONFIG)", () => {
@@ -348,27 +348,33 @@ describe("AgentPersonaCoachPlugin", () => {
       });
     }
 
-    /** Anchor a session then open the realignment window via resetTraversal (default realign). */
+    /**
+     * Anchor a session, open the realignment window via resetTraversal (default
+     * realign), and fire the nudge (first non-traversal call) so nudgeSent
+     * becomes true and the gate is active for testing.
+     */
     function anchoredPending(p: AgentPersonaCoachPlugin, sessionId = SESSION_ID): void {
       p.onToolAfter(sessionId, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
       p.resetTraversal(sessionId); // default onUserMessage:"realign" → realign, not reset
+      // Fire the nudge (first non-traversal call) so nudgeSent becomes true.
+      p.onToolAfter(sessionId, "bash", {}, AGENT_NAME, {});
     }
 
-    it("returns null for an un-anchored session (never blocks outside a realignment window)", () => {
+    it("returns null for an un-anchored session (never blocks outside a realignment window)", async () => {
       const p = gatePlugin();
       p.setChatClient(mockClient);
-      strictEqual(p.onToolBefore("fresh", "read", { path: "/tmp/a" }), null);
-      strictEqual(p.onToolBefore("fresh", "bash", { command: "ls" }), null);
+      strictEqual(await p.onToolBefore("fresh", "read", { path: "/tmp/a" }), null);
+      strictEqual(await p.onToolBefore("fresh", "bash", { command: "ls" }), null);
     });
 
-    it("returns null for traversal tools during a pending realignment (allows)", () => {
+    it("returns null for traversal tools during a pending realignment (allows)", async () => {
       const p = gatePlugin();
       p.setChatClient(mockClient);
       anchoredPending(p);
-      strictEqual(p.onToolBefore(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_b" }), null);
-      strictEqual(p.onToolBefore(SESSION_ID, "bensyne_fetchFile", { file_id: "file_b" }), null);
+      strictEqual(await p.onToolBefore(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_b" }), null);
+      strictEqual(await p.onToolBefore(SESSION_ID, "bensyne_fetchFile", { file_id: "file_b" }), null);
       strictEqual(
-        p.onToolBefore(SESSION_ID, "meta_use", {
+        await p.onToolBefore(SESSION_ID, "meta_use", {
           name: "bensyne_getPersonaEntryNode",
           args: { memory_bank: "agent-persona_worker" },
         }),
@@ -376,28 +382,28 @@ describe("AgentPersonaCoachPlugin", () => {
       );
     });
 
-    it("returns the hard-gate message (not a throw) for any other tool during a pending realignment", () => {
+    it("returns the hard-gate message (not a throw) for any other tool during a pending realignment", async () => {
       const p = gatePlugin();
       p.setChatClient(mockClient);
       anchoredPending(p);
-      const msg = p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" });
+      const msg = await p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" });
       ok(typeof msg === "string" && msg.includes("Hard Gate"), "returns the hard-gate message, never throws");
       ok(msg?.includes(GATE_WORDING), "message contains the configured gate wording");
 
-      strictEqual(p.onToolBefore(SESSION_ID, "bash", { command: "ls" }), msg);
+      strictEqual(await p.onToolBefore(SESSION_ID, "bash", { command: "ls" }), msg);
     });
 
-    it("returns null again after the agent re-affirms via a traversal tool (window closes)", () => {
+    it("returns null again after the agent re-affirms via a traversal tool (window closes)", async () => {
       const p = gatePlugin();
       p.setChatClient(mockClient);
       anchoredPending(p);
 
       // Window open → blocked.
-      ok(typeof p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" }) === "string", "blocked while window open");
+      ok(typeof (await p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" })) === "string", "blocked while window open");
 
       // Re-affirmation consumes the window (observe traversal tool).
       p.onToolAfter(SESSION_ID, "bensyne_expandFileRelations", { file_id: "file_a" }, AGENT_NAME, {});
-      strictEqual(p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" }), null, "window closed after re-affirmation");
+      strictEqual(await p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" }), null, "window closed after re-affirmation");
     });
   });
 

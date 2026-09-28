@@ -18,3 +18,5 @@ Architecture decisions for the agent-persona-coach plugin.
 - [[0008-restore-system-transform-init.adr.md]] — Restore system.transform for persona extraction only (supersedes ADR-0005)
 - [[0009-move-rules-nudge-to-ontoolafter.adr.md]] — Move rules nudge from onToolBefore to onToolAfter (resolves memory-0005)
 - [[0010-traversal-nudge.adr.md]] — Traversal-Nudge Mode: deterministic, zero-LLM state machine (anchoring, backtracking, pause nodes)
+- [[0013-hard-gate.adr.md]] — Hard Gate: deterministic tool blocking during the realignment window (opt-in) — **superseded by ADR-0014**
+- [[0014-hard-gate-v4-mid-turn-interruption.adr.md]] — Hard-Gate v4: Mid-Turn Non-Compliance Interruption via Synthetic User Message

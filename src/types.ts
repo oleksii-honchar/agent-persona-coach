@@ -53,6 +53,8 @@ export interface PluginConfig {
         // opt-in tool.execute.before enforcement (§6)
         enabled: boolean;
         allowedTools?: string[]; // extra tools allowed while gating (defaults to toolPatterns)
+        allowedBashPatterns?: string[]; // substrings matched against bash command (default [])
+        opencodeBaseUrl?: string; // better-opencode base URL for L2 reconcile (absent = L2 skipped)
         wording: string; // blocking message
       };
       supervisor: {
@@ -165,8 +167,10 @@ export const DEFAULT_CONFIG: PluginConfig = {
       hardGate: {
         enabled: false,
         allowedTools: [],
+        allowedBashPatterns: [],
+        // opencodeBaseUrl intentionally ABSENT by default → L2 reconcile skipped (D6)
         wording:
-          "BLOCKED — your persona requires you to realign with the decision tree: call a traversal tool (expandFileRelations/fetchFile) and state current node + target/veto/conditions status before any other tool.",
+          "BLOCKED — you are mid-task. Do NOT restart from the beginning.\nResume from your current decision node: `{node}`.\nFetch it now with fetchFile (file_id from your anchor metadata) and\nfollow its guidance (conditions / veto / target) before proceeding.\nIf you have no current node, re-enter via getPersonaEntryNode.",
       },
       supervisor: {
         enabled: false,

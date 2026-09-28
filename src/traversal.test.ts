@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import { strictEqual, deepStrictEqual, ok } from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { TraversalConfig, TraversalNudgeEngine } from "./traversal.js";
@@ -614,6 +614,10 @@ describe("Task 4 — ADR-0011 realign-on-user-message + AD-08 note path (docs)",
 
 describe("TraversalNudgeEngine — hard gate blockIfNeeded (Task 5, spec §6 / D6)", () => {
   const GATE_WORDING = "BLOCKED — realign with the decision tree now.";
+  const ORIGINAL_FETCH = globalThis.fetch;
+  afterEach(() => {
+    (globalThis as any).fetch = ORIGINAL_FETCH;
+  });
 
   /** Engine with the hard gate switched on; `hardGate` in overrides replaces the whole object. */
   function gateEngine(
@@ -627,59 +631,72 @@ describe("TraversalNudgeEngine — hard gate blockIfNeeded (Task 5, spec §6 / D
     );
   }
 
-  /** Anchor a session and open the realignment window (anchored + realignPending). */
-  function anchoredPending(engine: TraversalNudgeEngine, sessionId = "s1"): void {
+  /**
+   * Anchor a session, open the realignment window, and fire the nudge
+   * (so nudgeSent is true and the gate is active for testing).
+   * Returns the session ID used.
+   */
+  function anchoredPending(engine: TraversalNudgeEngine, sessionId = "s1"): string {
     engine.observeTool(sessionId, "bensyne_expandFileRelations", { file_id: "file_a" });
     engine.realign(sessionId);
+    // Fire the nudge (first non-traversal call) so nudgeSent becomes true.
+    engine.observeTool(sessionId, "bash");
+    return sessionId;
   }
 
-  it("should return null when the session is not anchored (never blocks outside the realignment window)", () => {
+  it("should return null when the session is not anchored (never blocks outside the realignment window)", async () => {
     const engine = gateEngine();
-    strictEqual(engine.blockIfNeeded("fresh", "read", { path: "/tmp/a" }), null);
-    strictEqual(engine.blockIfNeeded("fresh", "bash", { command: "ls" }), null);
+    strictEqual(await engine.blockIfNeeded("fresh", "read", { path: "/tmp/a" }), null);
+    strictEqual(await engine.blockIfNeeded("fresh", "bash", { command: "ls" }), null);
 
     // Reset wipes the anchor — also un-anchored.
     anchoredPending(engine, "s1");
     strictEqual(engine.hasAnchor("s1"), true);
     engine.reset("s1");
     strictEqual(engine.hasAnchor("s1"), false);
-    strictEqual(engine.blockIfNeeded("s1", "read"), null);
+    strictEqual(await engine.blockIfNeeded("s1", "read"), null);
   });
 
-  it("should return null when anchored but realignPending is false", () => {
+  it("should return null when anchored but nudgeSent is false (before the nudge is fired)", async () => {
     const engine = gateEngine();
+    // Anchored but no realignment window opened — nudgeSent is false.
     engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
-    strictEqual(engine.blockIfNeeded("s1", "read"), null);
+    strictEqual(await engine.blockIfNeeded("s1", "read"), null);
 
-    // After a traversal re-affirmation the flag is consumed — window closed.
-    anchoredPending(engine, "s2");
+    // After a traversal re-affirmation, nudgeSent is reset (via realign) — window closed.
     engine.observeTool("s2", "bensyne_expandFileRelations", { file_id: "file_a" });
-    strictEqual(engine.getState("s2").realignPending, false);
-    strictEqual(engine.blockIfNeeded("s2", "read"), null);
+    engine.realign("s2");
+    // Fire the nudge (sets nudgeSent=true).
+    engine.observeTool("s2", "bash");
+    // Now realign again (resets nudgeSent to false).
+    engine.realign("s2");
+    strictEqual(engine.getState("s2").nudgeSent, false);
+    // Gate should not fire because nudgeSent is false.
+    strictEqual(await engine.blockIfNeeded("s2", "read"), null);
   });
 
-  it("should allow all traversal tools during a pending realignment", () => {
+  it("should allow all traversal tools during a pending realignment", async () => {
     const engine = gateEngine();
     anchoredPending(engine);
     const sessionId = "s1";
     for (const tool of ["getPersonaEntryNode", "expandFileRelations", "fetchFile", "getPersonaStatus"]) {
-      strictEqual(engine.blockIfNeeded(sessionId, `bensyne_${tool}`, {}), null, `direct ${tool}`);
-      strictEqual(engine.blockIfNeeded(sessionId, `bensyne_bensyne-${tool}`, {}), null, `LiteLLM ${tool}`);
+      strictEqual(await engine.blockIfNeeded(sessionId, `bensyne_${tool}`, {}), null, `direct ${tool}`);
+      strictEqual(await engine.blockIfNeeded(sessionId, `bensyne_bensyne-${tool}`, {}), null, `LiteLLM ${tool}`);
     }
   });
 
-  it("should allow meta_use-wrapped traversal tools during a pending realignment", () => {
+  it("should allow meta_use-wrapped traversal tools during a pending realignment", async () => {
     const engine = gateEngine();
     anchoredPending(engine);
     strictEqual(
-      engine.blockIfNeeded("s1", "meta_use", {
+      await engine.blockIfNeeded("s1", "meta_use", {
         name: "bensyne_getPersonaEntryNode",
         args: { memory_bank: "agent-persona_worker" },
       }),
       null
     );
     strictEqual(
-      engine.blockIfNeeded("s1", "meta_use", {
+      await engine.blockIfNeeded("s1", "meta_use", {
         name: "bensyne_expandFileRelations",
         args: { file_id: "file_a" },
       }),
@@ -687,57 +704,69 @@ describe("TraversalNudgeEngine — hard gate blockIfNeeded (Task 5, spec §6 / D
     );
   });
 
-  it("should allow tools listed in hardGate.allowedTools during a pending realignment", () => {
+  it("should allow tools listed in hardGate.allowedTools during a pending realignment", async () => {
     const engine = gateEngine({
       hardGate: { enabled: true, allowedTools: ["read", "bash"], wording: GATE_WORDING },
     });
-    anchoredPending(engine);
-    strictEqual(engine.blockIfNeeded("s1", "read", { path: "/tmp/a" }), null);
-    strictEqual(engine.blockIfNeeded("s1", "bash", { command: "ls" }), null);
+    const sid = anchoredPending(engine);
+    strictEqual(await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" }), null);
+    strictEqual(await engine.blockIfNeeded(sid, "bash", { command: "ls" }), null);
     // A tool outside the allow-list is still blocked.
-    strictEqual(engine.blockIfNeeded("s1", "write", { path: "/tmp/b" }), formatHardGateMessage(GATE_WORDING));
+    strictEqual(await engine.blockIfNeeded(sid, "write", { path: "/tmp/b" }), formatHardGateMessage(GATE_WORDING));
   });
 
-  it("should fall back to toolPatterns as the effective allow-list when allowedTools is not provided (undefined)", () => {
+  it("should fall back to toolPatterns as the effective allow-list when allowedTools is not provided (undefined)", async () => {
     const engine = gateEngine(); // hardGate = { enabled: true, wording } — allowedTools undefined
-    anchoredPending(engine);
+    const sid = anchoredPending(engine);
     // Traversal tools are in toolPatterns by default → allowed.
-    strictEqual(engine.blockIfNeeded("s1", "bensyne_getPersonaStatus", {}), null);
-    strictEqual(engine.blockIfNeeded("s1", "bensyne_expandFileRelations", { file_id: "file_a" }), null);
+    strictEqual(await engine.blockIfNeeded(sid, "bensyne_getPersonaStatus", {}), null);
+    strictEqual(await engine.blockIfNeeded(sid, "bensyne_expandFileRelations", { file_id: "file_a" }), null);
     // Non-traversal tool → blocked.
-    strictEqual(engine.blockIfNeeded("s1", "read"), formatHardGateMessage(GATE_WORDING));
+    strictEqual(await engine.blockIfNeeded(sid, "read"), formatHardGateMessage(GATE_WORDING));
   });
 
-  it("should fall back to toolPatterns as the effective allow-list when allowedTools is an empty array", () => {
+  it("should fall back to toolPatterns as the effective allow-list when allowedTools is an empty array", async () => {
     const engine = gateEngine({
       hardGate: { enabled: true, allowedTools: [], wording: GATE_WORDING },
     });
-    anchoredPending(engine);
-    strictEqual(engine.blockIfNeeded("s1", "bensyne_fetchFile", { file_id: "file_a" }), null);
-    strictEqual(engine.blockIfNeeded("s1", "bash"), formatHardGateMessage(GATE_WORDING));
+    const sid = anchoredPending(engine);
+    strictEqual(await engine.blockIfNeeded(sid, "bensyne_fetchFile", { file_id: "file_a" }), null);
+    strictEqual(await engine.blockIfNeeded(sid, "bash"), formatHardGateMessage(GATE_WORDING));
   });
 
-  it("should return the hard-gate message (formatHardGateMessage output) for any other tool", () => {
+  it("should return the hard-gate message (formatHardGateMessage output) for any other tool", async () => {
     const engine = gateEngine();
-    anchoredPending(engine);
-    const msg = engine.blockIfNeeded("s1", "read", { path: "/tmp/a" });
+    const sid = anchoredPending(engine);
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
     strictEqual(msg, formatHardGateMessage(GATE_WORDING));
     ok(msg?.includes("Hard Gate"));
     ok(msg?.includes(GATE_WORDING));
 
-    const msg2 = engine.blockIfNeeded("s1", "bash", { command: "ls" });
+    const msg2 = await engine.blockIfNeeded(sid, "bash", { command: "ls" });
     strictEqual(msg2, formatHardGateMessage(GATE_WORDING));
   });
 
-  it("should never block when hardGate.enabled is false (even anchored + realignPending)", () => {
-    const engine = new TraversalNudgeEngine(makeConfig()); // default hardGate.enabled = false
-    anchoredPending(engine);
-    strictEqual(engine.getState("s1").realignPending, true);
-    strictEqual(engine.blockIfNeeded("s1", "read", { path: "/tmp/a" }), null);
-    strictEqual(engine.blockIfNeeded("s1", "bash"), null);
+  it("should render the in-memory anchor node into a {node}-bearing wording (no literal {node})", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: { enabled: true, wording: "BLOCKED — resume from {node}." },
+      })
+    );
+    const sid = anchoredPending(engine); // anchors file_a + fires nudge (nudgeSent=true)
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    ok(msg?.includes("resume from file_a."), "renders the anchored node into the message");
+    ok(!msg?.includes("{node}"), "leaves no {node} literal in the rendered message");
   });
 
-  it("should never block when the whole traversal feature is disabled (enabled=false)", () => {
+  it("should never block when hardGate.enabled is false (even anchored + nudgeSent)", async () => {
+    const engine = new TraversalNudgeEngine(makeConfig()); // default hardGate.enabled = false
+    const sid = anchoredPending(engine);
+    strictEqual(engine.getState(sid).nudgeSent, true); // nudge was fired
+    strictEqual(await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" }), null);
+    strictEqual(await engine.blockIfNeeded(sid, "bash"), null);
+  });
+
+  it("should never block when the whole traversal feature is disabled (enabled=false)", async () => {
     const engine = new TraversalNudgeEngine(
       makeConfig({
         enabled: false,
@@ -746,8 +775,8 @@ describe("TraversalNudgeEngine — hard gate blockIfNeeded (Task 5, spec §6 / D
     );
     engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
     engine.realign("s1");
-    strictEqual(engine.blockIfNeeded("s1", "read"), null);
-    strictEqual(engine.blockIfNeeded("s1", "bash"), null);
+    strictEqual(await engine.blockIfNeeded("s1", "read"), null);
+    strictEqual(await engine.blockIfNeeded("s1", "bash"), null);
   });
 
   it("should expose the effective allow-list as toolPatterns ∪ allowedTools (observable resolution)", () => {
@@ -765,6 +794,214 @@ describe("TraversalNudgeEngine — hard gate blockIfNeeded (Task 5, spec §6 / D
     const fallback = gateEngine().hardGateAllowedTools;
     deepStrictEqual(fallback, DEFAULT_CONFIG.categories.traversal.toolPatterns);
   });
+
+  it("should let rememberMemory (in allowedTools) pass the gate while read still blocks (C3 structural write)", async () => {
+    const engine = gateEngine({
+      hardGate: {
+        enabled: true,
+        allowedTools: ["bensyne_bensyne-rememberMemory"],
+        wording: GATE_WORDING,
+      },
+    });
+    const sid = anchoredPending(engine);
+    strictEqual(
+      await engine.blockIfNeeded(sid, "bensyne_bensyne-rememberMemory", {
+        content: "Accepted node 'x'",
+        memory_bank: "agent-session-s1",
+      }),
+      null
+    );
+    // A non-allow-listed tool still blocks during the same pending realignment.
+    strictEqual(await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" }), formatHardGateMessage(GATE_WORDING));
+  });
+
+  it("should let a bash command containing an allowedBashPattern pass (C3 anchor-curl)", async () => {
+    const engine = gateEngine({
+      hardGate: {
+        enabled: true,
+        allowedBashPatterns: ["/metadata/persona.anchor_file_id"],
+        wording: GATE_WORDING,
+      },
+    });
+    const sid = anchoredPending(engine);
+    strictEqual(
+      await engine.blockIfNeeded(sid, "bash", {
+        command: "curl -s http://localhost:4096/session/x/metadata/persona.anchor_file_id",
+      }),
+      null
+    );
+  });
+
+  it("should still block arbitrary bash even when allowedBashPatterns is set (C3 narrowness)", async () => {
+    const engine = gateEngine({
+      hardGate: {
+        enabled: true,
+        allowedBashPatterns: ["/metadata/persona.anchor_file_id"],
+        wording: GATE_WORDING,
+      },
+    });
+    const sid = anchoredPending(engine);
+    strictEqual(await engine.blockIfNeeded(sid, "bash", { command: "ls" }), formatHardGateMessage(GATE_WORDING));
+    strictEqual(await engine.blockIfNeeded(sid, "bash", { command: "rm -rf /" }), formatHardGateMessage(GATE_WORDING));
+  });
+
+  it("should never auto-allow bash via toolPatterns/allowedTools names or treat bash as a traversal call (C3 narrowness guard)", async () => {
+    const engine = gateEngine(); // no allowedBashPatterns
+    // Anchor WITHOUT opening a realign window: a bash command containing a
+    // toolPatterns word must be treated as non-traversal (empty below cadence).
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    deepStrictEqual(engine.observeTool("s1", "bash", { command: "echo fetchFile" }), []);
+    // Anchor unchanged — bash was NOT treated as a traversal call.
+    strictEqual(engine.getState("s1").anchorNode, "file_a");
+    strictEqual(engine.getState("s1").pending, true);
+
+    // In a realign window, a bash command containing a toolPatterns word still blocks.
+    engine.realign("s1");
+    // Fire the nudge (first non-traversal call) so nudgeSent becomes true.
+    engine.observeTool("s1", "bash", { command: "echo trigger_nudge" });
+    strictEqual(
+      await engine.blockIfNeeded("s1", "bash", { command: "echo fetchFile" }),
+      formatHardGateMessage(GATE_WORDING)
+    );
+  });
+
+  it("should behave identically to pre-change when allowedBashPatterns is empty (C3 backward compat)", async () => {
+    const engine = gateEngine({
+      hardGate: { enabled: true, allowedBashPatterns: [], wording: GATE_WORDING },
+    });
+    const sid = anchoredPending(engine);
+    strictEqual(await engine.blockIfNeeded(sid, "bash", { command: "ls" }), formatHardGateMessage(GATE_WORDING));
+    strictEqual(
+      await engine.blockIfNeeded(sid, "bash", {
+        command: "curl -s http://localhost:4096/session/x/metadata/persona.anchor_file_id",
+      }),
+      formatHardGateMessage(GATE_WORDING)
+    );
+  });
+
+  // ── C4-L2 persisted-anchor reconciliation (Task 4, spec §3.4 / D6) ──────────
+
+  it("L2: persisted anchor wins over the in-memory anchor when opencodeBaseUrl is set", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: {
+          enabled: true,
+          opencodeBaseUrl: "http://localhost:4096",
+          wording: "BLOCKED — resume from {node}.",
+        },
+      })
+    );
+    const sid = anchoredPending(engine); // in-memory anchor = file_a + fires nudge (nudgeSent=true)
+    (globalThis as any).fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ value: "file_persisted" }),
+    });
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    ok(msg?.includes("file_persisted"), "persisted value is interpolated into the message");
+    ok(!msg?.includes("file_a"), "in-memory anchor is not used when a persisted value differs");
+  });
+
+  it("L2: fail-open when fetch throws — gate still blocks with the in-memory anchor", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: {
+          enabled: true,
+          opencodeBaseUrl: "http://localhost:4096",
+          wording: "BLOCKED — resume from {node}.",
+        },
+      })
+    );
+    const sid = anchoredPending(engine);
+    (globalThis as any).fetch = async () => {
+      throw new Error("boom");
+    };
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    ok(msg?.includes("Hard Gate"), "still blocks");
+    ok(msg?.includes("file_a"), "in-memory anchor is interpolated on fetch error (fail-open)");
+  });
+
+  it("L2: fail-open on non-200 — gate still blocks with the in-memory anchor", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: {
+          enabled: true,
+          opencodeBaseUrl: "http://localhost:4096",
+          wording: "BLOCKED — resume from {node}.",
+        },
+      })
+    );
+    const sid = anchoredPending(engine);
+    (globalThis as any).fetch = async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    });
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    ok(msg?.includes("Hard Gate"), "still blocks");
+    ok(msg?.includes("file_a"), "in-memory anchor is interpolated on non-200 (fail-open)");
+  });
+
+  it("L2: skipped entirely when opencodeBaseUrl is absent — fetch is never called", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: { enabled: true, wording: "BLOCKED — resume from {node}." },
+      })
+    );
+    const sid = anchoredPending(engine);
+    let called = 0;
+    (globalThis as any).fetch = async () => {
+      called++;
+      return { ok: true, status: 200, json: async () => ({ value: "file_persisted" }) };
+    };
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    strictEqual(called, 0, "fetch must never be called without opencodeBaseUrl");
+    ok(msg?.includes("file_a"), "in-memory anchor used (Task 2 behavior preserved)");
+  });
+
+  it("L2: at most one reconcile per realign window (cached; new window reconciles again)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: {
+          enabled: true,
+          opencodeBaseUrl: "http://localhost:4096",
+          wording: "BLOCKED — resume from {node}.",
+        },
+      })
+    );
+    const sid = anchoredPending(engine);
+    let counter = 0;
+    (globalThis as any).fetch = async () => {
+      counter++;
+      return { ok: true, status: 200, json: async () => ({ value: "file_persisted" }) };
+    };
+    await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    strictEqual(counter, 1, "second block in the same realign window must not re-fetch");
+    engine.realign("s1");
+    // New realign window: fire the nudge first to set nudgeSent=true.
+    engine.observeTool("s1", "bash");
+    await engine.blockIfNeeded("s1", "read", { path: "/tmp/a" });
+    strictEqual(counter, 2, "a fresh realign window reconciles again");
+  });
+
+  it("L2: never changes the block/no-block decision — only the node label", async () => {
+    const engine = gateEngine({
+      hardGate: {
+        enabled: true,
+        opencodeBaseUrl: "http://localhost:4096",
+        wording: GATE_WORDING,
+      },
+    });
+    const sid = anchoredPending(engine);
+    (globalThis as any).fetch = async () => {
+      throw new Error("boom");
+    };
+    // Allow-listed (traversal) tool still allowed during a pending realignment.
+    strictEqual(await engine.blockIfNeeded(sid, "bensyne_getPersonaStatus", {}), null);
+    // Non-traversal tool still blocked with the configured wording.
+    strictEqual(await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" }), formatHardGateMessage(GATE_WORDING));
+  });
 });
 
 describe("Task 5 — ADR-0013 hard gate (docs)", () => {
@@ -776,6 +1013,262 @@ describe("Task 5 — ADR-0013 hard gate (docs)", () => {
     ok(adr.includes("id: ADR-0013"));
     ok(adr.includes("hard gate") || adr.includes("hard-gate") || adr.includes("Hard Gate"));
     ok(adr.includes("ADR-0009"));
+  });
+});
+
+describe("TraversalNudgeEngine — nudgeSent state field (Task 1)", () => {
+  it("should return state with nudgeSent: false from createState()", () => {
+    const engine = new TraversalNudgeEngine(makeConfig());
+    const state = engine.getState("s1");
+    strictEqual(state.nudgeSent, false);
+  });
+
+  it("should reset nudgeSent to false when realign() is called", () => {
+    const engine = new TraversalNudgeEngine(makeConfig());
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    // Simulate nudgeSent being set (will be set by observeNonTraversal in Task 2).
+    const state = engine.getState("s1");
+    state.nudgeSent = true;
+
+    engine.realign("s1");
+
+    const stateAfter = engine.getState("s1");
+    strictEqual(stateAfter.nudgeSent, false);
+  });
+
+  it("should preserve nudgeSent across non-traversal calls (no auto-reset)", () => {
+    const engine = new TraversalNudgeEngine(makeConfig({ nudgeAfter: 1 }));
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    const state = engine.getState("s1");
+    state.nudgeSent = true;
+
+    // Non-traversal call should not reset nudgeSent.
+    engine.observeTool("s1", "bash");
+    const stateAfter = engine.getState("s1");
+    strictEqual(stateAfter.nudgeSent, true);
+  });
+});
+
+describe("TraversalNudgeEngine — v4 mid-turn gate detection (Task 2)", () => {
+  const GATE_WORDING = "BLOCKED — resume from {node}.";
+
+  it("should set nudgeSent to true after firing a realign nudge", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ nudgeAfter: 5, recurrentEvery: 2, maxRepeats: 20 })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // First non-traversal call fires the realign nudge.
+    const nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("Realign Check"));
+
+    // nudgeSent should now be true.
+    strictEqual(engine.getState("s1").nudgeSent, true);
+  });
+
+  it("should return the hard-gate message on the second non-traversal call after the nudge", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        nudgeAfter: 5,
+        recurrentEvery: 2,
+        maxRepeats: 20,
+        hardGate: { enabled: true, wording: GATE_WORDING },
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // First non-traversal call fires the realign nudge (nudgeSent becomes true).
+    const nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("Realign Check"));
+    strictEqual(engine.getState("s1").nudgeSent, true);
+
+    // Second non-traversal call should return the hard-gate message.
+    const gateMsg = await engine.blockIfNeeded("s1", "bash", { command: "ls" });
+    ok(gateMsg, "should return the gate message on second non-traversal call");
+    ok(gateMsg.includes("Hard Gate"));
+  });
+
+  it("should render the anchor node into the gate message (not leave {node} literal)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        nudgeAfter: 5,
+        recurrentEvery: 2,
+        maxRepeats: 20,
+        hardGate: { enabled: true, wording: GATE_WORDING },
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // Fire the nudge first.
+    engine.observeTool("s1", "bash");
+    strictEqual(engine.getState("s1").nudgeSent, true);
+
+    // Second non-traversal call should return the gate message with the anchor.
+    const gateMsg = await engine.blockIfNeeded("s1", "bash", { command: "ls" });
+    ok(gateMsg?.includes("resume from file_a."), "renders the anchored node into the message");
+    ok(!gateMsg?.includes("{node}"), "leaves no {node} literal in the rendered message");
+  });
+
+  it("should not fire the gate when nudgeSent is false (first non-traversal call still gets a nudge)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        nudgeAfter: 5,
+        recurrentEvery: 2,
+        maxRepeats: 20,
+        hardGate: { enabled: true, wording: GATE_WORDING },
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // nudgeSent is false before the nudge is fired.
+    strictEqual(engine.getState("s1").nudgeSent, false);
+
+    // First non-traversal call fires the nudge, not the gate.
+    const nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("Realign Check"));
+
+    // The gate is NOT yet active (only one non-traversal call so far).
+    const gateMsg = await engine.blockIfNeeded("s1", "bash", { command: "ls" });
+    // After the nudge was sent (nudgeSent=true), the next non-traversal call should gate.
+    ok(gateMsg, "gate fires on second non-traversal call (after nudgeSent was set)");
+  });
+});
+
+describe("TraversalNudgeEngine — clear nudgeSent on realign (Task 3)", () => {
+  const GATE_WORDING = "BLOCKED — resume from {node}.";
+
+  it("should clear nudgeSent to false when the agent calls a traversal tool (realigns)", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ nudgeAfter: 5, recurrentEvery: 2, maxRepeats: 20 })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // First non-traversal call fires the realign nudge (sets nudgeSent=true).
+    const nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("Realign Check"));
+    strictEqual(engine.getState("s1").nudgeSent, true);
+
+    // Agent now realigns by calling a traversal tool.
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_b" });
+
+    // nudgeSent should be cleared to false.
+    strictEqual(engine.getState("s1").nudgeSent, false);
+  });
+
+  it("should allow subsequent non-traversal calls after realign without firing the gate (normal cadence resumes)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        nudgeAfter: 5,
+        recurrentEvery: 2,
+        maxRepeats: 20,
+        hardGate: { enabled: true, wording: GATE_WORDING },
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // First non-traversal call fires the realign nudge (nudgeSent becomes true).
+    engine.observeTool("s1", "bash");
+    strictEqual(engine.getState("s1").nudgeSent, true);
+
+    // Agent realigns by calling a traversal tool.
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_b" });
+    strictEqual(engine.getState("s1").nudgeSent, false);
+
+    // Subsequent non-traversal calls should NOT fire the gate (nudgeSent was cleared).
+    const gateMsg = await engine.blockIfNeeded("s1", "bash", { command: "ls" });
+    strictEqual(gateMsg, null, "gate should not fire after realign (nudgeSent cleared)");
+  });
+});
+
+describe("TraversalNudgeEngine — un-anchored sessions never set nudgeSent (Task 4)", () => {
+  it("should not set nudgeSent on un-anchored session after non-traversal calls", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ nudgeAfter: 1, recurrentEvery: 1, maxRepeats: 5 })
+    );
+    // No anchor — agent makes non-traversal calls.
+    engine.observeTool("s1", "bash", { command: "ls" });
+    engine.observeTool("s1", "read", { path: "/tmp/a" });
+    // nudgeSent should remain false — no anchor, no realignment window.
+    strictEqual(engine.getState("s1").nudgeSent, false);
+    strictEqual(engine.getState("s1").anchorNode, undefined);
+  });
+
+  it("should not set nudgeSent on anchored session without realign() call", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ nudgeAfter: 1, recurrentEvery: 1, maxRepeats: 5 })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    // Anchor exists but no realignment window opened.
+    engine.observeTool("s1", "bash", { command: "ls" });
+    // nudgeSent should remain false — no realign() call.
+    strictEqual(engine.getState("s1").nudgeSent, false);
+  });
+});
+
+describe("TraversalNudgeEngine — gate fires consistently in same window (Task 4)", () => {
+  it("should fire the gate on every non-traversal tool call in the same window", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        nudgeAfter: 5,
+        recurrentEvery: 2,
+        maxRepeats: 20,
+        hardGate: { enabled: true, wording: "BLOCKED — resume from {node}." },
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // Fire the nudge (first non-traversal call).
+    const nudges = engine.observeTool("s1", "bash");
+    strictEqual(nudges.length, 1);
+    ok(nudges[0].includes("Realign Check"));
+    strictEqual(engine.getState("s1").nudgeSent, true);
+
+    // Every subsequent non-traversal call should be blocked by the gate.
+    for (let i = 0; i < 3; i++) {
+      const msg = await engine.blockIfNeeded("s1", "bash", { command: `ls ${i}` });
+      ok(msg, `gate should fire on non-traversal call ${i + 1}`);
+      ok(msg.includes("Hard Gate"));
+    }
+  });
+
+  it("should allow traversal tools even after the gate has fired", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        nudgeAfter: 5,
+        recurrentEvery: 2,
+        maxRepeats: 20,
+        hardGate: { enabled: true, wording: "BLOCKED — resume from {node}." },
+      })
+    );
+    engine.observeTool("s1", "bensyne_expandFileRelations", { file_id: "file_a" });
+    engine.realign("s1");
+
+    // Fire the nudge.
+    engine.observeTool("s1", "bash");
+    strictEqual(engine.getState("s1").nudgeSent, true);
+
+    // Gate blocks non-traversal tools.
+    const blocked = await engine.blockIfNeeded("s1", "bash", { command: "ls" });
+    ok(blocked, "non-traversal call should be blocked");
+
+    // But traversal tools are still allowed.
+    const allowed = await engine.blockIfNeeded(
+      "s1",
+      "bensyne_expandFileRelations",
+      { file_id: "file_b" }
+    );
+    strictEqual(allowed, null, "traversal call should be allowed even after gate fires");
   });
 });
 

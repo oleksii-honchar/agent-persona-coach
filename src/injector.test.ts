@@ -90,5 +90,20 @@ describe("formatHardGateMessage", () => {
     ok(result.endsWith("</system-reminder>"));
     ok(result.includes("BLOCKED — realign with the decision tree now."));
   });
+
+  it("should interpolate the {node} placeholder with the node label when provided", () => {
+    const result = formatHardGateMessage("BLOCKED — resume from {node}.", "file_a");
+    ok(result.includes("resume from file_a."));
+    ok(!result.includes("{node}"));
+  });
+
+  it("should leave the wording byte-identical when no node is provided (backward compatible)", () => {
+    // No node arg → the {node} literal must be preserved exactly as the
+    // pre-change behavior always produced (no templating happens).
+    const result = formatHardGateMessage("BLOCKED — resume from {node}.");
+    ok(result.startsWith("<system-reminder>"));
+    ok(result.endsWith("</system-reminder>"));
+    ok(result.includes("BLOCKED — resume from {node}."));
+  });
 });
 

@@ -84,12 +84,15 @@ export function formatRealignNudge(wording: string, node: string): string {
  * Format the hard-gate blocking message as a <system-reminder> block (spec §6).
  * Returned by the engine when a non-traversal tool fires during a pending
  * realignment; the server hook throws it to abort the tool call.
+ * The {node} placeholder in wording is replaced with node when provided
+ * (mirrors formatRealignNudge); without node the wording is output as-is.
  */
-export function formatHardGateMessage(wording: string): string {
+export function formatHardGateMessage(wording: string, node?: string): string {
+  const rendered = node ? wording.replaceAll("{node}", node) : wording;
   return `<system-reminder>
   Hard Gate:
-  - ${wording}
-</system-reminder>`;
+  - ${rendered}
+  </system-reminder>`;
 }
 
 

@@ -186,12 +186,14 @@ export class AgentPersonaCoachPlugin {
   /**
    * Called before each tool execution by the server's tool.execute.before
    * hook (Task 6, spec §6 / D6, ADR-0013). Delegates to the traversal engine's
-   * hard gate (`blockIfNeeded`). Returns the blocking message (so the server
-   * hook can throw it and abort the tool), or null to allow. Never throws at
-   * the plugin layer — the throw lives in the server hook.
+   * hard gate (`blockIfNeeded`). Returns a Promise resolving to the blocking
+   * message (so the awaiting server hook can throw it and abort the tool), or
+   * null to allow. Never throws at the plugin layer — the throw lives in the
+   * server hook. Async since Task 4 (DEV-1): the engine's C4-L2 reconcile may
+   * perform a best-effort HTTP fetch to better-opencode session_metadata.
    */
-  onToolBefore(sessionId: string, toolName: string, toolArgs?: unknown): string | null {
-    return this.traversalEngine.blockIfNeeded(sessionId, toolName, toolArgs);
+  async onToolBefore(sessionId: string, toolName: string, toolArgs?: unknown): Promise<string | null> {
+    return await this.traversalEngine.blockIfNeeded(sessionId, toolName, toolArgs);
   }
 
   // ---- Compliance supervisor surface (Task 8, spec §7 / D7) ----

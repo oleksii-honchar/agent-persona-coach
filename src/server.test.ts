@@ -859,6 +859,21 @@ describe("server", () => {
         { message: "realign me", parts: [] }
       );
 
+      // Fire the nudge first (first non-traversal call after realign) so nudgeSent
+      // becomes true and the gate is active. The nudge is injected via onToolAfter,
+      // not blocked by onToolBefore.
+      const nudgeOutput = aToolOutput();
+      await hooks["tool.execute.before"]!(
+        { tool: "bash", sessionID: "sess-g1", callID: "n1" },
+        { args: {} }
+      );
+      await hooks["tool.execute.after"]!(
+        { tool: "bash", sessionID: "sess-g1", callID: "n1", args: {} } as any,
+        nudgeOutput
+      );
+      ok(nudgeOutput.inject?.some((n: { text: string }) => n.text.includes("Realign Check")), "nudge should be injected");
+
+      // Now the gate should fire on the second non-traversal call.
       await rejects(
         hooks["tool.execute.before"]!(
           { tool: "read", sessionID: "sess-g1", callID: "g1" },
@@ -866,7 +881,7 @@ describe("server", () => {
         ),
         (err: unknown) =>
           err instanceof Error && err.message.includes("BLOCKED — realign with the tree now."),
-        "before-hook should throw the hard-gate message for a non-traversal tool during realignment"
+        "before-hook should throw the hard-gate message for a non-traversal tool after nudge was sent"
       );
 
       // A traversal tool passes (no throw).

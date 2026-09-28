@@ -7,7 +7,7 @@ createdAt: "2026-09-11T11:20:37Z"
 updatedAt: "2026-09-11T11:20:37Z"
 tags: [traversal, hard-gate, enforcement, realign, before-hook, compliance, d6]
 supersedes: []
-superseded_by: []
+superseded_by: ["adrs/0014-hard-gate-v4-mid-turn-interruption.adr.md"]
 see_also:
   - "adrs/0009-move-rules-nudge-to-ontoolafter.adr.md"
   - "adrs/0010-traversal-nudge.adr.md"

@@ -29,7 +29,13 @@ export interface TraversalConfig {
   bootstrapWording: string;
   realignWording: string;
   ladderWording: string[];
-  hardGate: { enabled: boolean; allowedTools?: string[]; wording: string };
+  hardGate: {
+    enabled: boolean;
+    allowedTools?: string[];
+    allowedBashPatterns?: string[];
+    opencodeBaseUrl?: string;
+    wording: string;
+  };
   supervisor: {
     enabled: boolean;
     model: string;
@@ -50,6 +56,10 @@ export interface TraversalSessionState {
   repeats: number; // nudges already injected for this anchor
   cycleCount: number; // consecutive re-anchors on the SAME node (stuck-in-branch signal)
   anchorKind?: "normal" | "pause"; // pause/wait node classification (AD-13)
+  nudgeSent: boolean; // a realign nudge has been sent in the current realignment window (v4)
+  // ── Task 4 (C4-L2, spec §3.4 / D6): persisted-anchor reconciliation memo ──
+  persistedAnchor?: string; // last known persisted `persona.anchor_file_id` value
+  anchorReconciled?: boolean; // whether this realign window has already reconciled
 }
 
 /**
@@ -110,6 +120,10 @@ export class TraversalNudgeEngine {
     state.nonTraversalCalls = 0;
     state.repeats = 0;
     state.cycleCount = 0;
+    // Each realign window allows one fresh nudge (v4).
+    state.nudgeSent = false;
+    // Each realign window allows exactly one fresh L2 reconcile (D6).
+    state.anchorReconciled = false;
   }
 
   /**
@@ -146,14 +160,60 @@ export class TraversalNudgeEngine {
    *   allow-list → null (allows).
    * - any other tool → `formatHardGateMessage(hardGate.wording)`.
    */
-  blockIfNeeded(sessionID: string, toolName: string, toolArgs?: unknown): string | null {
+  async blockIfNeeded(sessionID: string, toolName: string, toolArgs?: unknown): Promise<string | null> {
     if (!this.config.enabled || !this.config.hardGate.enabled) return null;
     if (!this.hasAnchor(sessionID)) return null;
     const state = this.getState(sessionID);
-    if (state.realignPending !== true) return null;
+    // v4: fire the gate only after the agent ignored the realign nudge.
+    // relignPending is consumed after the nudge fires, so we track nudgeSent instead.
+    if (state.nudgeSent !== true) return null;
     if (this.isTraversalTool(toolName, toolArgs)) return null;
-    if (this.matchesAnyPattern(toolName, this.hardGateAllowedTools, toolArgs)) return null;
-    return formatHardGateMessage(this.config.hardGate.wording);
+    if (this.matchesAnyPattern(toolName, this.hardGateAllowedTools, toolArgs, this.config.hardGate.allowedBashPatterns ?? []))
+      return null;
+    return formatHardGateMessage(this.config.hardGate.wording, await this.resolveGateNode(sessionID, state));
+  }
+
+  /**
+   * C4-L2 (spec §3.4 / D6): reconcile the in-memory `anchorNode` with the
+   * persisted `persona.anchor_file_id` in better-opencode session_metadata.
+   * Runs ONLY when the gate is actually about to block (off hot path), is
+   * cached at most once per realign window, is fail-open on every failure,
+   * and never changes the block/no-block decision — it only picks the node
+   * label interpolated into the gate message.
+   *
+   * - No `opencodeBaseUrl` (or empty) → L2 skipped entirely (fail-open by
+   *   config; behavior matches Task 2).
+   * - Already reconciled this window → memoized persisted value (or in-memory).
+   * - Otherwise: best-effort `GET {baseUrl}/session/{sessionID}/metadata/
+   *   persona.anchor_file_id`; persisted non-empty value wins. ANY error
+   *   (throw / !ok / bad JSON / missing value) keeps the in-memory anchor and
+   *   marks the window reconciled (no retry). NEVER throws.
+   */
+  private async resolveGateNode(
+    sessionID: string,
+    state: TraversalSessionState
+  ): Promise<string | undefined> {
+    const baseUrl = this.config.hardGate.opencodeBaseUrl;
+    if (!baseUrl) return state.anchorNode ?? undefined;
+    if (state.anchorReconciled === true) {
+      return (state.persistedAnchor ?? state.anchorNode) ?? undefined;
+    }
+    try {
+      const res = await fetch(
+        `${baseUrl}/session/${sessionID}/metadata/persona.anchor_file_id`
+      );
+      if (res.ok) {
+        const body = (await res.json()) as { value?: string };
+        if (typeof body.value === "string" && body.value !== "") {
+          state.persistedAnchor = body.value;
+        }
+      }
+    } catch {
+      // Fail-open: keep the in-memory anchor on any fetch/parse error.
+    } finally {
+      state.anchorReconciled = true;
+    }
+    return (state.persistedAnchor ?? state.anchorNode) ?? undefined;
   }
 
   /**
@@ -192,13 +252,29 @@ export class TraversalNudgeEngine {
    * `isTraversalTool` (toolPatterns) and `blockIfNeeded` (effective
    * allow-list) — single source of truth for shape handling.
    */
-  private matchesAnyPattern(toolName: string, patterns: string[], toolArgs?: unknown): boolean {
+  private matchesAnyPattern(
+    toolName: string,
+    patterns: string[],
+    toolArgs?: unknown,
+    bashPatterns?: string[] // C3/D5: bash-command substrings, checked only when toolName === "bash"
+  ): boolean {
     if (patterns.some((p) => toolName.includes(p))) return true;
     if (toolArgs && typeof toolArgs === "object") {
       const name = (toolArgs as Record<string, unknown>).name;
       if (typeof name === "string") {
         return patterns.some((p) => name.includes(p));
       }
+    }
+    // NEW (C3/D5): allow specific bash commands (structural writes) WITHOUT
+    // unblocking bash broadly. Only ever matches against bashPatterns; never
+    // inspects commands for any other tool, and never runs for `isTraversalTool`
+    // (which calls this with no bashPatterns).
+    if (toolName === "bash" && bashPatterns && bashPatterns.length > 0) {
+      const cmd =
+        typeof (toolArgs as Record<string, unknown>)?.command === "string"
+          ? ((toolArgs as Record<string, unknown>).command as string)
+          : "";
+      return bashPatterns.some((p) => cmd.includes(p));
     }
     return false;
   }
@@ -251,6 +327,7 @@ export class TraversalNudgeEngine {
     // ANY traversal call — first-anchor, advancement, or same-node re-anchor —
     // means the agent has re-affirmed/aligned (spec §4 / D3).
     state.realignPending = false;
+    state.nudgeSent = false;
 
     if (state.pending && state.anchorNode !== undefined) {
       if (this.isAnchorChanged(nodeId, state.anchorNode)) {
@@ -307,6 +384,7 @@ export class TraversalNudgeEngine {
       state.repeats++;
       const nudge = this.buildProgressNudge(state);
       state.realignPending = false;
+      state.nudgeSent = true; // v4: mark that a nudge was sent in this window
       return [nudge];
     }
 
@@ -370,6 +448,9 @@ export class TraversalNudgeEngine {
       repeats: 0,
       cycleCount: 0,
       anchorKind: undefined,
+      nudgeSent: false,
+      persistedAnchor: undefined,
+      anchorReconciled: false,
     };
   }
 
