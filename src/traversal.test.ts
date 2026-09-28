@@ -7,6 +7,7 @@ import {
   formatBacktrackNudge,
   formatRealignNudge,
   formatHardGateMessage,
+  formatDynamicHardGateMessage,
 } from "./injector.js";
 import { DEFAULT_CONFIG } from "./types.js";
 
@@ -983,6 +984,56 @@ describe("TraversalNudgeEngine — hard gate blockIfNeeded (Task 5, spec §6 / D
     engine.observeTool("s1", "bash");
     await engine.blockIfNeeded("s1", "read", { path: "/tmp/a" });
     strictEqual(counter, 2, "a fresh realign window reconciles again");
+  });
+
+  // ── Dynamic wording: different wording when node is undefined vs anchored ──
+
+  it("should return different wording when node is undefined vs when node is anchored (dynamic wording)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: {
+          enabled: true,
+          wording: "LEGACY WORDING",
+          wordingWithNode: "BLOCKED — resume from {node}.",
+          wordingNoNode: "BLOCKED — enter the decision tree via getPersonaEntryNode.",
+        },
+      })
+    );
+
+    // Case 1: anchored on a valid node (file_a) → wordingWithNode with {node} replaced
+    const sid = anchoredPending(engine);
+    const msgWithNode = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    ok(msgWithNode?.includes("resume from file_a."), "uses wordingWithNode with {node} replaced when anchored");
+    ok(!msgWithNode?.includes("getPersonaEntryNode"), "does not use wordingNoNode when anchored");
+    ok(!msgWithNode?.includes("LEGACY WORDING"), "does not use legacy wording when wordingWithNode is set");
+
+    // Case 2: simulate no node — bypass resolveGateNode by calling formatDynamicHardGateMessage directly
+    const msgNoNode = formatDynamicHardGateMessage(undefined, {
+      wording: "LEGACY WORDING",
+      wordingWithNode: "BLOCKED — resume from {node}.",
+      wordingNoNode: "BLOCKED — enter the decision tree via getPersonaEntryNode.",
+    });
+    ok(msgNoNode.includes("getPersonaEntryNode"), "uses wordingNoNode when node is undefined");
+    ok(!msgNoNode.includes("resume from"), "does not use wordingWithNode when node is undefined");
+    ok(!msgNoNode.includes("LEGACY WORDING"), "does not use legacy wording when wordingNoNode is set");
+
+    // Verify the two messages are different
+    ok(msgWithNode !== msgNoNode, "different wording when anchored vs unanchored");
+  });
+
+  it("should use legacy wording when wordingWithNode/wordingNoNode are not set (backward compat)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({
+        hardGate: { enabled: true, wording: "LEGACY WORDING {node}" },
+      })
+    );
+    const sid = anchoredPending(engine);
+    const msg = await engine.blockIfNeeded(sid, "read", { path: "/tmp/a" });
+    ok(msg?.includes("LEGACY WORDING file_a"), "uses legacy wording with {node} replaced when anchored");
+
+    const msgNoNode = formatDynamicHardGateMessage(undefined, { wording: "LEGACY WORDING {node}" });
+    ok(msgNoNode.includes("LEGACY WORDING"), "uses legacy wording when node is undefined");
+    ok(msgNoNode.includes("{node}"), "legacy wording with {node} unrendered when node is undefined");
   });
 
   it("L2: never changes the block/no-block decision — only the node label", async () => {

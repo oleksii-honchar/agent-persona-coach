@@ -3,6 +3,7 @@ import {
   formatBacktrackNudge,
   formatRealignNudge,
   formatHardGateMessage,
+  formatDynamicHardGateMessage,
   isNodeIdLabel,
 } from "./injector.js";
 
@@ -36,6 +37,8 @@ export interface TraversalConfig {
     allowedBashPatterns?: string[];
     opencodeBaseUrl?: string;
     wording: string;
+    wordingWithNode?: string;
+    wordingNoNode?: string;
   };
   supervisor: {
     enabled: boolean;
@@ -180,7 +183,7 @@ export class TraversalNudgeEngine {
     // Layer-2 (Ad-Hoc): never interpolate a bare tool-name fallback into
     // `{node}` — resolveGateNode returns undefined for such labels so the
     // wording's "re-enter via getPersonaEntryNode" fallback applies.
-    return formatHardGateMessage(this.config.hardGate.wording, node);
+    return formatDynamicHardGateMessage(node, this.config.hardGate);
   }
 
   /**

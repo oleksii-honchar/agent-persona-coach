@@ -26,6 +26,21 @@ export interface CoachState {
   referenceCheckInjected: boolean;
 }
 
+/**
+ * Hard-gate enforcement configuration (spec §6).
+ * Supports legacy single-wording mode and dynamic dual-wording mode
+ * (wordingWithNode / wordingNoNode).
+ */
+export interface HardGateConfig {
+  enabled: boolean;
+  allowedTools?: string[];
+  allowedBashPatterns?: string[];
+  opencodeBaseUrl?: string;
+  wording: string;
+  wordingWithNode?: string;
+  wordingNoNode?: string;
+}
+
 export interface PluginConfig {
   enabled: boolean;
   coachPrompt: string;
@@ -55,7 +70,9 @@ export interface PluginConfig {
         allowedTools?: string[]; // extra tools allowed while gating (defaults to toolPatterns)
         allowedBashPatterns?: string[]; // substrings matched against bash command (default [])
         opencodeBaseUrl?: string; // better-opencode base URL for L2 reconcile (absent = L2 skipped)
-        wording: string; // blocking message
+        wording: string; // blocking message (legacy, used when wordingWithNode/wordingNoNode absent)
+        wordingWithNode?: string; // blocking message when anchored on a node (spec §6.1)
+        wordingNoNode?: string; // blocking message when not anchored (spec §6.1)
       };
       supervisor: {
         // opt-in LLM compliance supervisor (§7)

@@ -5,6 +5,7 @@ import {
   formatBootstrapNudge,
   formatRealignNudge,
   formatHardGateMessage,
+  formatDynamicHardGateMessage,
 } from "./injector.js";
 
 describe("formatNudge", () => {
@@ -104,6 +105,94 @@ describe("formatHardGateMessage", () => {
     ok(result.startsWith("<system-reminder>"));
     ok(result.endsWith("</system-reminder>"));
     ok(result.includes("BLOCKED — resume from {node}."));
+  });
+});
+
+describe("formatDynamicHardGateMessage", () => {
+  const configWithBoth = {
+    wording: "legacy default wording",
+    wordingWithNode: "BLOCKED — resume from your current decision node: {node}.",
+    wordingNoNode: "BLOCKED — you have no current node, re-enter via getPersonaEntryNode.",
+  };
+
+  it("should return wordingNoNode when node is undefined", () => {
+    const result = formatDynamicHardGateMessage(undefined, configWithBoth);
+    ok(result.includes("you have no current node, re-enter via getPersonaEntryNode."));
+    ok(!result.includes("resume from your current decision node"));
+    ok(!result.includes("{node}"));
+  });
+
+  it("should return wordingWithNode with {node} replaced when node is a valid file_id", () => {
+    const result = formatDynamicHardGateMessage("file_abc123", configWithBoth);
+    ok(result.includes("resume from your current decision node: file_abc123."));
+    ok(!result.includes("{node}"));
+    ok(!result.includes("you have no current node"));
+  });
+
+  it("should return wordingWithNode with {node} replaced when node is a valid node_id", () => {
+    const result = formatDynamicHardGateMessage("node_xyz", configWithBoth);
+    ok(result.includes("resume from your current decision node: node_xyz."));
+    ok(!result.includes("{node}"));
+  });
+
+  it("should fallback to legacy wording when wordingWithNode is not set", () => {
+    const configLegacyFallback = {
+      wording: "BLOCKED — resume from {node}.",
+      wordingNoNode: "BLOCKED — re-enter via getPersonaEntryNode.",
+    };
+    const result = formatDynamicHardGateMessage("file_a", configLegacyFallback);
+    ok(result.includes("resume from file_a."));
+    ok(!result.includes("{node}"));
+  });
+
+  it("should fallback to legacy wording when wordingNoNode is not set", () => {
+    const configLegacyFallback = {
+      wording: "BLOCKED — resume from {node}.",
+      wordingWithNode: "BLOCKED — resume from your current decision node: {node}.",
+    };
+    const result = formatDynamicHardGateMessage(undefined, configLegacyFallback);
+    ok(result.includes("BLOCKED — resume from {node}."));
+    ok(!result.includes("your current decision node"));
+  });
+
+  it("should use legacy wording for both cases when neither new field is set (full backward compat)", () => {
+    const configLegacyOnly = {
+      wording: "BLOCKED — resume from {node}.",
+    };
+    const resultWithNode = formatDynamicHardGateMessage("file_a", configLegacyOnly);
+    ok(resultWithNode.includes("resume from file_a."));
+    ok(!resultWithNode.includes("{node}"));
+
+    const resultNoNode = formatDynamicHardGateMessage(undefined, configLegacyOnly);
+    ok(resultNoNode.includes("BLOCKED — resume from {node}."));
+  });
+
+  it("should treat tool names as not-a-node and return wordingNoNode", () => {
+    const result = formatDynamicHardGateMessage("bensyne_getPersonaEntryNode", configWithBoth);
+    ok(result.includes("you have no current node, re-enter via getPersonaEntryNode."));
+    ok(!result.includes("bensyne_getPersonaEntryNode"));
+    ok(!result.includes("{node}"));
+  });
+
+  it("should treat traversal tool names as not-a-node (multiple examples)", () => {
+    const toolNames = [
+      "expandFileRelations",
+      "fetchFile",
+      "getPersonaEntryNode",
+      "recallMemory",
+      "bensyne_expandFileRelations",
+    ];
+    for (const toolName of toolNames) {
+      const result = formatDynamicHardGateMessage(toolName, configWithBoth);
+      ok(result.includes("you have no current node"), `Expected wordingNoNode for tool name: ${toolName}`);
+    }
+  });
+
+  it("should wrap the message in a <system-reminder> block", () => {
+    const result = formatDynamicHardGateMessage(undefined, configWithBoth);
+    ok(result.startsWith("<system-reminder>"));
+    ok(result.endsWith("</system-reminder>"));
+    ok(result.includes("Hard Gate:"));
   });
 });
 

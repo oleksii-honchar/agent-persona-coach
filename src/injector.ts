@@ -117,3 +117,41 @@ export function formatHardGateMessage(wording: string, node?: string): string {
   </system-reminder>`;
 }
 
+/**
+ * Format a dynamic hard-gate blocking message (spec §6.1).
+ *
+ * Unlike formatHardGateMessage (legacy single-wording), this function selects
+ * the wording based on whether a real node label is available:
+ * - node defined AND isNodeIdLabel(node): uses hardGateConfig.wordingWithNode
+ *   (or hardGateConfig.wording as fallback) with {node} replaced
+ * - node undefined or not a valid node id: uses hardGateConfig.wordingNoNode
+ *   (or hardGateConfig.wording as fallback)
+ *
+ * This enables different messaging for mid-task blocking vs. first-call
+ * blocking, without the {node} placeholder being left unrendered.
+ */
+export function formatDynamicHardGateMessage(
+  node: string | undefined,
+  hardGateConfig: {
+    wording: string;
+    wordingWithNode?: string;
+    wordingNoNode?: string;
+  }
+): string {
+  let wording = hardGateConfig.wording;
+  let resolved = wording;
+
+  if (node && isNodeIdLabel(node)) {
+    wording = hardGateConfig.wordingWithNode || hardGateConfig.wording;
+    resolved = wording.replaceAll("{node}", node);
+  } else {
+    wording = hardGateConfig.wordingNoNode || hardGateConfig.wording;
+    resolved = wording;
+  }
+
+  return `<system-reminder>
+  Hard Gate:
+  - ${resolved}
+  </system-reminder>`;
+}
+
