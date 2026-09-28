@@ -6,6 +6,26 @@ const CATEGORY_NAMES: Record<string, string> = {
 };
 
 /**
+ * Layer-2 guard (Ad-Hoc fix): a label is renderable into `{node}` only when it
+ * is a real node id — `file_...`/`node_...`-shaped, or at least does NOT look
+ * like a traversal tool name. Tool names (bensyne_*, getPersonaEntryNode,
+ * expandFileRelations, fetchFile, ...) must NEVER be interpolated into `{node}`:
+ * the wording then either carries a file_id `fetchFile` can use, or leaves
+ * `{node}` unrendered so the wording's own fallback clause applies.
+ *
+ * Shared by every formatter in this module and by the traversal engine's
+ * message paths (blockIfNeeded → resolveGateNode).
+ */
+const TRAVERSAL_TOOL_NAME_PATTERN =
+  /bensyne|getPersonaEntryNode|expandFileRelations|fetchFile|getPersonaStatus|recallMemory|searchFiles|searchMemoryBank|listMemoryBanks|getMemoryStats|FileChunks/i;
+
+export function isNodeIdLabel(label: string): boolean {
+  if (typeof label !== "string" || label === "") return false;
+  if (label.startsWith("file_") || label.startsWith("node_")) return true;
+  return !TRAVERSAL_TOOL_NAME_PATTERN.test(label);
+}
+
+/**
  * Format reflection questions as a <system-reminder> block.
  */
 export function formatNudge(categoryId: string, questions: string[]): string {
@@ -25,7 +45,8 @@ export function formatNudge(categoryId: string, questions: string[]): string {
  * The {node} placeholder in wording is replaced with nodeLabel.
  */
 export function formatTraversalNudge(wording: string, nodeLabel: string): string {
-  const resolved = wording.replaceAll("{node}", nodeLabel);
+  const resolved =
+    nodeLabel && isNodeIdLabel(nodeLabel) ? wording.replaceAll("{node}", nodeLabel) : wording;
   return `<system-reminder>
   Traversal Check:
   - ${resolved}
@@ -41,7 +62,8 @@ export function formatTraversalNudge(wording: string, nodeLabel: string): string
  */
 export function formatBacktrackNudge(wording: string, path: string[]): string {
   const nodeLabel = path.length > 0 ? path[path.length - 1] : "";
-  const resolved = wording.replaceAll("{node}", nodeLabel);
+  const resolved =
+    nodeLabel && isNodeIdLabel(nodeLabel) ? wording.replaceAll("{node}", nodeLabel) : wording;
   const pathLine = path.length > 0 ? `\n  - Recent anchors: ${path.join(" → ")}` : "";
   return `<system-reminder>
   Backtrack Check:
@@ -71,7 +93,7 @@ export function formatBootstrapNudge(wording: string): string {
  * otherwise traverse. The {node} placeholder in wording is replaced with node.
  */
 export function formatRealignNudge(wording: string, node: string): string {
-  const resolved = wording.replaceAll("{node}", node);
+  const resolved = node && isNodeIdLabel(node) ? wording.replaceAll("{node}", node) : wording;
   return `<system-reminder>
   Realign Check:
   - ${resolved}
@@ -88,11 +110,10 @@ export function formatRealignNudge(wording: string, node: string): string {
  * (mirrors formatRealignNudge); without node the wording is output as-is.
  */
 export function formatHardGateMessage(wording: string, node?: string): string {
-  const rendered = node ? wording.replaceAll("{node}", node) : wording;
+  const rendered = node && isNodeIdLabel(node) ? wording.replaceAll("{node}", node) : wording;
   return `<system-reminder>
   Hard Gate:
   - ${rendered}
   </system-reminder>`;
 }
-
 

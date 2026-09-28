@@ -1385,3 +1385,122 @@ describe("TraversalNudgeEngine — forceAlways (Task 2)", () => {
     strictEqual(cfg.forceAlways, true);
   });
 });
+
+describe("Ad-Hoc — {node} interpolation uses a real node id (Layer 1 + Layer 2)", () => {
+  const GATE_WORDING = "BLOCKED — resume from {node}.";
+
+  it("should anchor on the file_id returned in getPersonaEntryNode's result (structuredContent)", () => {
+    const engine = new TraversalNudgeEngine(makeConfig());
+    engine.observeTool(
+      "s1",
+      "bensyne_getPersonaEntryNode",
+      { memory_bank: "agent-persona_worker" },
+      { structuredContent: { file_id: "file_entry", title: "Start" } }
+    );
+    const state = engine.getState("s1");
+    strictEqual(state.pending, true);
+    strictEqual(state.anchorNode, "file_entry");
+  });
+
+  it("should interpolate the result-derived file_id into the gate message (no tool name)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ hardGate: { enabled: true, wording: GATE_WORDING } })
+    );
+    engine.observeTool(
+      "s1",
+      "bensyne_getPersonaEntryNode",
+      { memory_bank: "agent-persona_worker" },
+      { structuredContent: { file_id: "file_entry" } }
+    );
+    engine.realign("s1");
+    engine.observeTool("s1", "bash"); // fire the nudge → nudgeSent = true
+    const msg = await engine.blockIfNeeded("s1", "read", { path: "/tmp/a" });
+    ok(msg?.includes("resume from file_entry."), "renders the result-derived file_id");
+    ok(!msg?.includes("bensyne"), "no tool name in the gate message");
+    ok(!msg?.includes("{node}"), "no unrendered {node} literal when a real node id exists");
+  });
+
+  it("should prefer args.file_id over the result-derived id (expandFileRelations unchanged)", () => {
+    const engine = new TraversalNudgeEngine(makeConfig());
+    engine.observeTool(
+      "s1",
+      "bensyne_expandFileRelations",
+      { file_id: "file_arg" },
+      { structuredContent: { file_id: "file_result" } }
+    );
+    strictEqual(engine.getState("s1").anchorNode, "file_arg");
+  });
+
+  it("should extract node ids from result direct fields and recall-like file_enrichment shapes", () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ toolPatterns: ["expandFileRelations", "fetchFile", "recallMemory", "getPersonaEntryNode"] })
+    );
+    engine.observeTool(
+      "s1",
+      "bensyne_recallMemory",
+      { query: "entry" },
+      { file_enrichment: { file: { id: "file_recalled" } } }
+    );
+    strictEqual(engine.getState("s1").anchorNode, "file_recalled");
+    engine.observeTool(
+      "s2",
+      "bensyne_fetchFile",
+      { path_handle: "worker/00-entry.md" },
+      { file_id: "file_fetched" }
+    );
+    strictEqual(engine.getState("s2").anchorNode, "file_fetched");
+  });
+
+  it("should NOT render a bare tool-name fallback into the gate message ({node} stays unrendered)", async () => {
+    const engine = new TraversalNudgeEngine(
+      makeConfig({ hardGate: { enabled: true, wording: GATE_WORDING } })
+    );
+    engine.observeTool("s1", "bensyne_getPersonaEntryNode", { memory_bank: "agent-persona_worker" });
+    // No result → anchor stays the tool name (existing fallback preserved).
+    strictEqual(engine.getState("s1").anchorNode, "bensyne_getPersonaEntryNode");
+    engine.realign("s1");
+    engine.observeTool("s1", "bash");
+    const msg = await engine.blockIfNeeded("s1", "read", { path: "/tmp/a" });
+    ok(msg, "gate still blocks");
+    ok(msg.includes("{node}"), "{node} stays unrendered (wording fallback applies)");
+    ok(!msg.includes("bensyne_getPersonaEntryNode"), "tool name never interpolated");
+    ok(!msg.includes("bensyne"), "no bensyne prefix anywhere in the message");
+  });
+
+  it("should not render a tool-name fallback into realign nudge wording (no tool name)", () => {
+    const realignWording = "REALIGN — stay on {node}.";
+    const engine = new TraversalNudgeEngine(makeConfig({ realignWording }));
+    engine.observeTool("s2", "bensyne_getPersonaEntryNode", { memory_bank: "agent-persona_worker" });
+    engine.realign("s2");
+    const nudge = engine.observeTool("s2", "bash");
+    strictEqual(nudge.length, 1);
+    ok(!nudge[0].includes("bensyne"), "realign nudge contains no tool name");
+    ok(nudge[0].includes("{node}"), "realign nudge leaves {node} unrendered for tool-name fallback");
+  });
+
+  it("should render the result-derived id into realignWording nudges for traversal-tool anchors", () => {
+    const realignWording = "REALIGN — stay on {node}.";
+    const engine = new TraversalNudgeEngine(makeConfig({ realignWording }));
+    engine.observeTool(
+      "s1",
+      "bensyne_getPersonaEntryNode",
+      { memory_bank: "agent-persona_worker" },
+      { structuredContent: { file_id: "file_entry" } }
+    );
+    engine.realign("s1");
+    const nudge = engine.observeTool("s1", "bash");
+    strictEqual(nudge.length, 1);
+    ok(nudge[0].includes("REALIGN — stay on file_entry."), "renders the result-derived file_id");
+    ok(!nudge[0].includes("bensyne"), "no tool name in the nudge");
+  });
+
+  it("should keep the empty-args tool-name fallback for getPersonaEntryNode WITH no result (test updated with layer-2 guard)", () => {
+    const engine = new TraversalNudgeEngine(makeConfig());
+    engine.observeTool("s1", "bensyne_getPersonaEntryNode", { memory_bank: "persona_worker" });
+    const state = engine.getState("s1");
+    strictEqual(state.pending, true);
+    strictEqual(state.anchorNode, "bensyne_getPersonaEntryNode");
+    // Layer-2: the anchor MAY stay the tool name in state, but the message
+    // paths must never render it (covered by the gate/realign tests above).
+  });
+});

@@ -1543,4 +1543,57 @@ describe("server", () => {
       strictEqual(second.inject, undefined, "supervision flag cleared after failure");
     });
   });
+
+  // ── Ad-Hoc (Layer 1): tool.execute.after passes the raw tool result through ──
+
+  describe("Ad-Hoc — tool.execute.after forwards the tool result to the plugin", () => {
+    it("passes the hook output (raw tool result) to plugin.onToolAfter", async () => {
+      const plugin = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: { enabled: true, nudgeAfter: 2 },
+        },
+      });
+      const hooks = await createServerHooks(plugin, aMockPluginInput() as any);
+
+      let captured: { tool: string; result: unknown } | undefined;
+      const original = AgentPersonaCoachPlugin.prototype.onToolAfter;
+      AgentPersonaCoachPlugin.prototype.onToolAfter = function (
+        _sessionId: string,
+        toolName: string,
+        _toolArgs: unknown,
+        _agentName: string,
+        _agentInfo: Record<string, unknown>,
+        result?: unknown
+      ) {
+        captured = { tool: toolName, result };
+        return [];
+      };
+      try {
+        const resultOutput = {
+          title: "entry",
+          output: "",
+          metadata: {},
+          structuredContent: { file_id: "file_entry" },
+        };
+        await hooks["tool.execute.after"]!(
+          {
+            tool: "bensyne_getPersonaEntryNode",
+            sessionID: "sess-r1",
+            callID: "c1",
+            args: { memory_bank: "agent-persona_worker" },
+          } as any,
+          resultOutput as any
+        );
+        ok(captured, "plugin.onToolAfter should be called");
+        strictEqual(captured!.tool, "bensyne_getPersonaEntryNode");
+        strictEqual(captured!.result, resultOutput, "hook forwards the tool result object");
+      } finally {
+        AgentPersonaCoachPlugin.prototype.onToolAfter = original;
+      }
+    });
+  });
 });

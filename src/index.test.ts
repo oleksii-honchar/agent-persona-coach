@@ -324,6 +324,79 @@ describe("AgentPersonaCoachPlugin", () => {
     });
   });
 
+  // ── Ad-Hoc (Layer 1): onToolAfter forwards the tool result to the engine ──
+
+  describe("onToolAfter — tool-result forwarding to the traversal engine (Ad-Hoc)", () => {
+    it("should forward the tool result into observeTool (engine receives result)", () => {
+      let observed: { toolName: string; toolArgs: unknown; result: unknown } | undefined;
+      const original = TraversalNudgeEngine.prototype.observeTool;
+      TraversalNudgeEngine.prototype.observeTool = function (
+        _sessionId: string,
+        toolName: string,
+        toolArgs: unknown,
+        result?: unknown
+      ) {
+        observed = { toolName, toolArgs, result };
+        return [];
+      };
+      try {
+        const p = new AgentPersonaCoachPlugin({
+          categories: {
+            identity: { enabled: false },
+            rules: { enabled: false },
+            references: { enabled: false },
+            progress: { enabled: false },
+            traversal: { enabled: true, nudgeAfter: 2 },
+          },
+        });
+        p.setChatClient(mockClient);
+        const result = { structuredContent: { file_id: "file_entry" } };
+        p.onToolAfter(
+          SESSION_ID,
+          "bensyne_getPersonaEntryNode",
+          { memory_bank: "agent-persona_worker" },
+          AGENT_NAME,
+          {},
+          result
+        );
+        ok(observed, "engine.observeTool should have been called");
+        strictEqual(observed!.toolName, "bensyne_getPersonaEntryNode");
+        strictEqual(observed!.result, result, "the tool result object is forwarded");
+      } finally {
+        TraversalNudgeEngine.prototype.observeTool = original;
+      }
+    });
+
+    it("should anchor on the result-derived file_id end-to-end through the plugin (gate renders the real id)", async () => {
+      const p = new AgentPersonaCoachPlugin({
+        categories: {
+          identity: { enabled: false },
+          rules: { enabled: false },
+          references: { enabled: false },
+          progress: { enabled: false },
+          traversal: {
+            enabled: true,
+            hardGate: { enabled: true, wording: "BLOCKED — resume from {node}." },
+          },
+        },
+      });
+      p.setChatClient(mockClient);
+      p.onToolAfter(
+        SESSION_ID,
+        "bensyne_getPersonaEntryNode",
+        { memory_bank: "agent-persona_worker" },
+        AGENT_NAME,
+        {},
+        { structuredContent: { file_id: "file_entry" } }
+      );
+      p.resetTraversal(SESSION_ID); // default realign → window open
+      p.onToolAfter(SESSION_ID, "bash", {}, AGENT_NAME, {}); // fire the nudge → nudgeSent
+      const msg = await p.onToolBefore(SESSION_ID, "read", { path: "/tmp/a" });
+      ok(msg?.includes("resume from file_entry."), "gate message renders the result-derived file_id through the plugin");
+      ok(!msg?.includes("bensyne"), "no tool name leaks through the plugin path");
+    });
+  });
+
   // ── Task 6 (spec §3 + §6 wiring): bootstrap dispatch, before-hook delegate, resetTraversal routing ──
 
   describe("onToolBefore — hard-gate delegate (Task 6, spec §6)", () => {

@@ -3,6 +3,7 @@ import {
   formatBacktrackNudge,
   formatRealignNudge,
   formatHardGateMessage,
+  isNodeIdLabel,
 } from "./injector.js";
 
 /**
@@ -92,11 +93,16 @@ export class TraversalNudgeEngine {
    * none apply). Traversal calls re-anchor the state machine; non-traversal
    * calls accrue toward the nudge cadence.
    */
-  observeTool(sessionId: string, toolName: string, toolArgs?: unknown): string[] {
+  observeTool(
+    sessionId: string,
+    toolName: string,
+    toolArgs?: unknown,
+    result?: unknown
+  ): string[] {
     if (!this.config.enabled) return [];
     const state = this.getState(sessionId);
     if (this.isTraversalTool(toolName, toolArgs)) {
-      return this.observeTraversal(state, toolName, toolArgs);
+      return this.observeTraversal(state, toolName, toolArgs, result);
     }
     return this.observeNonTraversal(state);
   }
@@ -170,7 +176,11 @@ export class TraversalNudgeEngine {
     if (this.isTraversalTool(toolName, toolArgs)) return null;
     if (this.matchesAnyPattern(toolName, this.hardGateAllowedTools, toolArgs, this.config.hardGate.allowedBashPatterns ?? []))
       return null;
-    return formatHardGateMessage(this.config.hardGate.wording, await this.resolveGateNode(sessionID, state));
+    const node = await this.resolveGateNode(sessionID, state);
+    // Layer-2 (Ad-Hoc): never interpolate a bare tool-name fallback into
+    // `{node}` — resolveGateNode returns undefined for such labels so the
+    // wording's "re-enter via getPersonaEntryNode" fallback applies.
+    return formatHardGateMessage(this.config.hardGate.wording, node);
   }
 
   /**
@@ -194,9 +204,9 @@ export class TraversalNudgeEngine {
     state: TraversalSessionState
   ): Promise<string | undefined> {
     const baseUrl = this.config.hardGate.opencodeBaseUrl;
-    if (!baseUrl) return state.anchorNode ?? undefined;
+    if (!baseUrl) return this.renderableNode(state.anchorNode);
     if (state.anchorReconciled === true) {
-      return (state.persistedAnchor ?? state.anchorNode) ?? undefined;
+      return this.renderableNode(state.persistedAnchor ?? state.anchorNode);
     }
     try {
       const res = await fetch(
@@ -213,7 +223,17 @@ export class TraversalNudgeEngine {
     } finally {
       state.anchorReconciled = true;
     }
-    return (state.persistedAnchor ?? state.anchorNode) ?? undefined;
+    return this.renderableNode(state.persistedAnchor ?? state.anchorNode);
+  }
+
+  /**
+   * Layer-2 (Ad-Hoc): a node label is only renderable into `{node}` when it is
+   * a real node id. A tool-name fallback (e.g. `bensyne_getPersonaEntryNode`)
+   * is NOT renderable — the message layer then leaves `{node}` unrendered.
+   */
+  private renderableNode(label: string | null | undefined): string | undefined {
+    if (label === null || label === undefined) return undefined;
+    return isNodeIdLabel(label) ? label : undefined;
   }
 
   /**
@@ -281,9 +301,11 @@ export class TraversalNudgeEngine {
 
   /**
    * Prefer `file_id`/`node_id` from args (clean, unique node identity — AD-13);
+   * then any node id carried by the tool RESULT (the fork's tool.execute.after
+   * passes `output = {...result, attachments}` — Layer 1, Ad-Hoc fix); finally
    * fall back to the tool name. Unwraps `meta_use` shape `{ name, args }`.
    */
-  private extractNodeId(toolName: string, toolArgs?: unknown): string {
+  private extractNodeId(toolName: string, toolArgs?: unknown, result?: unknown): string {
     const args = this.normalizeArgs(toolName, toolArgs);
     if (args) {
       const fileId = args.file_id;
@@ -291,7 +313,43 @@ export class TraversalNudgeEngine {
       const nodeId = args.node_id;
       if (typeof nodeId === "string" && nodeId) return nodeId;
     }
+    const resultId = this.extractResultNodeId(result);
+    if (resultId) return resultId;
     return toolName;
+  }
+
+  /**
+   * Layer-1 (Ad-Hoc): read a node id from the tool result. bensyne traversal
+   * tools return the id in `structuredContent` (`getPersonaEntryNode.file_id`,
+   * `fetchFile.file_id`); recall-like tools nest it under
+   * `file_enrichment.file.id`. Checks the structuredContent mirror first, then
+   * top-level fields (some hosts spread the raw result onto the hook output).
+   */
+  private extractResultNodeId(result?: unknown): string | undefined {
+    if (!result || typeof result !== "object") return undefined;
+    const r = result as Record<string, unknown>;
+    const sc = r.structuredContent;
+    if (sc && typeof sc === "object") {
+      const fromStructured = this.pickNodeId(sc as Record<string, unknown>);
+      if (fromStructured) return fromStructured;
+    }
+    return this.pickNodeId(r);
+  }
+
+  private pickNodeId(obj: Record<string, unknown>): string | undefined {
+    const fileId = obj.file_id;
+    if (typeof fileId === "string" && fileId) return fileId;
+    const nodeId = obj.node_id;
+    if (typeof nodeId === "string" && nodeId) return nodeId;
+    const enrichment = obj.file_enrichment;
+    if (enrichment && typeof enrichment === "object") {
+      const file = (enrichment as Record<string, unknown>).file;
+      if (file && typeof file === "object") {
+        const id = (file as Record<string, unknown>).id;
+        if (typeof id === "string" && id) return id;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -318,9 +376,10 @@ export class TraversalNudgeEngine {
   private observeTraversal(
     state: TraversalSessionState,
     toolName: string,
-    toolArgs?: unknown
+    toolArgs?: unknown,
+    result?: unknown
   ): string[] {
-    const nodeId = this.extractNodeId(toolName, toolArgs);
+    const nodeId = this.extractNodeId(toolName, toolArgs, result);
     const kind = this.classifyAnchor(toolName, toolArgs);
     const nudges: string[] = [];
 

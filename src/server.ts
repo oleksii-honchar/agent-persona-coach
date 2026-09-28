@@ -203,7 +203,13 @@ export async function createServerHooks(
         }
       }
 
-      const nudges = plugin.onToolAfter?.(sessionID, tool, args, agentName, {}) ?? [];
+      // The fork's tool.execute.after hook receives the raw tool result as its
+      // output arg (`output = {...result, attachments}` — better-opencode
+      // packages/opencode/src/session/tools.ts:283-307). Forward it to the
+      // plugin so the traversal engine can read a real file_id from
+      // getPersonaEntryNode/fetchFile/recall results (Layer 1, Ad-Hoc fix)
+      // instead of anchoring on the bare tool name. agentInfo stays `{}`.
+      const nudges = plugin.onToolAfter?.(sessionID, tool, args, agentName, {}, output) ?? [];
 
       if (nudges.length > 0) {
         const categories = nudges

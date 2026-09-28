@@ -120,7 +120,8 @@ export class AgentPersonaCoachPlugin {
     toolName: string,
     toolArgs: unknown,
     agentName: string,
-    agentInfo: Record<string, unknown>
+    agentInfo: Record<string, unknown>,
+    result?: unknown
   ): string[] {
     const state = this.stateManager.incrementToolCall(sessionId);
     const nudges: string[] = [];
@@ -154,7 +155,10 @@ export class AgentPersonaCoachPlugin {
     // Traversal-nudge mode (C3, ADR-0009): deterministic observation after the
     // existing category nudges. Returns [] unless the traversal cadence holds;
     // makes no LLM calls (AD-7).
-    nudges.push(...this.traversalEngine.observeTool(sessionId, toolName, toolArgs));
+    // The tool result (Layer 1, Ad-Hoc fix — the server forwards the raw
+    // `tool.execute.after` output) lets the engine read a real node id from
+    // traversal-tool responses instead of falling back to the tool name.
+    nudges.push(...this.traversalEngine.observeTool(sessionId, toolName, toolArgs, result));
 
     return nudges;
   }
