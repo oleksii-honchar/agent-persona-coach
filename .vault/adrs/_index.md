@@ -1,7 +1,7 @@
 ---
 title: "ADRs"
 createdAt: "2026-06-09T00:00:00+02:00"
-updatedAt: "2026-06-12T14:20:00Z"
+updatedAt: "2026-09-28T16:45:00Z"
 ---
 
 # ADRs
@@ -20,3 +20,4 @@ Architecture decisions for the agent-persona-coach plugin.
 - [[0010-traversal-nudge.adr.md]] — Traversal-Nudge Mode: deterministic, zero-LLM state machine (anchoring, backtracking, pause nodes)
 - [[0013-hard-gate.adr.md]] — Hard Gate: deterministic tool blocking during the realignment window (opt-in) — **superseded by ADR-0014**
 - [[0014-hard-gate-v4-mid-turn-interruption.adr.md]] — Hard-Gate v4: Mid-Turn Non-Compliance Interruption via Synthetic User Message
+- [[0015-dynamic-hard-gate-wording.adr.md]] — Dynamic Hard-Gate Wording for Persona Traversal (state-aware messaging)
